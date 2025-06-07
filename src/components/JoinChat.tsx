@@ -1,33 +1,87 @@
 
 import React, { useState } from 'react';
 import { ArrowLeft, Users, MessageCircle, Database, Gamepad2, Lock } from 'lucide-react';
-import { Chat } from '../pages/Index';
+import { SearchBar } from './SearchBar';
+import { WaitingAnimation } from './WaitingAnimation';
+import { useChats } from '../hooks/useChats';
+import { supabase } from '@/integrations/supabase/client';
 
 interface JoinChatProps {
-  chats: Chat[];
   onBack: () => void;
-  onJoin: (chat: Chat, password?: string) => void;
+  onJoin: (chatId: string) => void;
 }
 
-export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => {
-  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
+export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
+  const { chats, loading } = useChats();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedChat, setSelectedChat] = useState<any>(null);
   const [password, setPassword] = useState('');
+  const [joining, setJoining] = useState(false);
 
-  const handleJoinClick = (chat: Chat) => {
+  const filteredChats = chats.filter(chat =>
+    chat.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleJoinClick = async (chat: any) => {
     if (chat.password) {
       setSelectedChat(chat);
-    } else {
-      onJoin(chat);
+      return;
+    }
+    await joinChat(chat);
+  };
+
+  const joinChat = async (chat: any, enteredPassword?: string) => {
+    if (chat.password && chat.password !== enteredPassword) {
+      alert('Неверный пароль!');
+      return;
+    }
+
+    if (chat.player_count >= chat.max_players) {
+      alert('Комната переполнена!');
+      return;
+    }
+
+    setJoining(true);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Пользователь не авторизован');
+
+      const { error } = await supabase
+        .from('chat_players')
+        .insert({
+          chat_id: chat.id,
+          user_id: user.id
+        });
+
+      if (error && !error.message.includes('duplicate key')) {
+        throw error;
+      }
+
+      onJoin(chat.id);
+    } catch (error: any) {
+      console.error('Error joining chat:', error);
+      alert('Ошибка при подключении к комнате');
+    } finally {
+      setJoining(false);
     }
   };
 
-  const handlePasswordSubmit = () => {
+  const handlePasswordSubmit = async () => {
     if (selectedChat) {
-      onJoin(selectedChat, password);
+      await joinChat(selectedChat, password);
       setSelectedChat(null);
       setPassword('');
     }
   };
+
+  if (loading) {
+    return (
+      <div className="h-screen flex justify-center items-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col p-4 overflow-hidden">
@@ -41,19 +95,31 @@ export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => 
         <h1 className="text-2xl font-bold text-white">Присоединиться</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="mb-4">
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Поиск комнат..."
+        />
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="space-y-4">
-          {chats.length === 0 ? (
-            <div className="gradient-card rounded-2xl p-8 text-center">
+          {filteredChats.length === 0 ? (
+            <div className="glass-card rounded-2xl p-8 text-center">
               <MessageCircle className="w-12 h-12 text-white/60 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-white mb-2">Нет доступных комнат</h3>
-              <p className="text-white/70">Создайте новую комнату или подождите</p>
+              <h3 className="text-lg font-semibold text-white mb-2">
+                {searchQuery ? 'Ничего не найдено' : 'Нет доступных комнат'}
+              </h3>
+              <p className="text-white/70">
+                {searchQuery ? 'Попробуйте изменить поисковый запрос' : 'Создайте новую комнату или подождите'}
+              </p>
             </div>
           ) : (
-            chats.map((chat) => (
+            filteredChats.map((chat) => (
               <div
                 key={chat.id}
-                className="gradient-card rounded-2xl p-6 hover:bg-white/15 transition-all"
+                className="glass-card rounded-2xl p-6 hover:bg-white/15 transition-all"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
@@ -75,32 +141,36 @@ export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => 
                     <div className="flex items-center gap-4 text-sm text-white/70 mb-2">
                       <div className="flex items-center gap-1">
                         <Users className="w-4 h-4" />
-                        <span>{chat.players.length}/{chat.maxPlayers} игроков</span>
+                        <span>{chat.player_count}/{chat.max_players} игроков</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <MessageCircle className="w-4 h-4" />
-                        <span>{chat.questions.length} вопросов</span>
+                        <span>{chat.questions?.length || 0} вопросов</span>
                       </div>
                     </div>
 
-                    <div>
-                      <span className="text-xs text-white/50">Игроки: </span>
-                      <span className="text-xs text-white/70">
-                        {chat.players.join(', ')}
-                      </span>
-                    </div>
+                    {chat.players.length > 0 && (
+                      <div className="mb-2">
+                        <span className="text-xs text-white/50">Игроки: </span>
+                        <span className="text-xs text-white/70">
+                          {chat.players.join(', ')}
+                        </span>
+                      </div>
+                    )}
 
-                    {chat.isStarted ? (
+                    {chat.is_started ? (
                       <div className="mt-2">
                         <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded-full">
                           Игра началась
                         </span>
                       </div>
-                    ) : chat.players.length < chat.minPlayers ? (
-                      <div className="mt-2">
-                        <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-full">
-                          Ожидание игроков ({chat.minPlayers - chat.players.length} осталось)
-                        </span>
+                    ) : chat.player_count < chat.min_players ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <WaitingAnimation 
+                          currentPlayers={chat.player_count}
+                          minPlayers={chat.min_players}
+                          maxPlayers={chat.max_players}
+                        />
                       </div>
                     ) : (
                       <div className="mt-2">
@@ -113,10 +183,14 @@ export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => 
 
                   <button
                     onClick={() => handleJoinClick(chat)}
-                    disabled={chat.players.length >= chat.maxPlayers}
-                    className="gradient-button text-white px-6 py-2 rounded-xl font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={chat.player_count >= chat.max_players || joining}
+                    className="glass-button text-white px-6 py-2 rounded-xl font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Войти
+                    {joining ? (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    ) : (
+                      'Войти'
+                    )}
                   </button>
                 </div>
               </div>
@@ -128,7 +202,7 @@ export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => 
       {/* Password Modal */}
       {selectedChat && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="gradient-card rounded-2xl p-6 w-full max-w-sm">
+          <div className="glass-card rounded-2xl p-6 w-full max-w-sm">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Lock className="w-5 h-5" />
               Введите пароль
@@ -153,9 +227,14 @@ export const JoinChat: React.FC<JoinChatProps> = ({ chats, onBack, onJoin }) => 
               </button>
               <button
                 onClick={handlePasswordSubmit}
-                className="flex-1 gradient-button text-white py-2 px-4 rounded-xl hover:shadow-lg transition-all"
+                disabled={joining}
+                className="flex-1 glass-button text-white py-2 px-4 rounded-xl hover:shadow-lg transition-all disabled:opacity-50"
               >
-                Войти
+                {joining ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mx-auto"></div>
+                ) : (
+                  'Войти'
+                )}
               </button>
             </div>
           </div>

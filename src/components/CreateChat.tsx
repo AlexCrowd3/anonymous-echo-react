@@ -1,20 +1,14 @@
 
 import React, { useState } from 'react';
 import { ArrowLeft, Plus, Minus, Gamepad2, Database, Lock, Users } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface CreateChatProps {
   onBack: () => void;
-  onCreate: (
-    chatName: string, 
-    mode: 'custom' | 'database', 
-    questions?: string[], 
-    password?: string,
-    maxPlayers?: number,
-    minPlayers?: number
-  ) => void;
+  onSuccess: () => void;
 }
 
-export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
+export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onSuccess }) => {
   const [chatName, setChatName] = useState('');
   const [mode, setMode] = useState<'custom' | 'database'>('custom');
   const [questions, setQuestions] = useState<string[]>(['']);
@@ -22,6 +16,7 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
   const [hasPassword, setHasPassword] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState(10);
   const [minPlayers, setMinPlayers] = useState(2);
+  const [loading, setLoading] = useState(false);
 
   const addQuestion = () => {
     setQuestions([...questions, '']);
@@ -39,33 +34,64 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
     setQuestions(newQuestions);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (chatName.trim()) {
-      if (mode === 'custom') {
-        const validQuestions = questions.filter(q => q.trim() !== '');
-        if (validQuestions.length === 0) {
-          alert('Добавьте хотя бы один вопрос!');
-          return;
-        }
-        onCreate(
-          chatName.trim(), 
-          mode, 
-          validQuestions,
-          hasPassword ? password : undefined,
-          maxPlayers,
-          minPlayers
-        );
-      } else {
-        onCreate(
-          chatName.trim(), 
-          mode, 
-          undefined,
-          hasPassword ? password : undefined,
-          maxPlayers,
-          minPlayers
-        );
+    if (!chatName.trim()) return;
+
+    setLoading(true);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Пользователь не авторизован');
+
+      const databaseQuestions = [
+        "Какая самая странная еда, которую ты когда-либо пробовал?",
+        "Если бы ты мог иметь любую суперсилу, какую бы выбрал?",
+        "Какой самый смешной случай произошел с тобой на публике?",
+        "Что бы ты делал, если бы выиграл миллион рублей?",
+        "Какое самое страшное место ты когда-либо посещал?"
+      ];
+
+      const finalQuestions = mode === 'database' 
+        ? databaseQuestions 
+        : questions.filter(q => q.trim() !== '');
+
+      if (mode === 'custom' && finalQuestions.length === 0) {
+        alert('Добавьте хотя бы один вопрос!');
+        setLoading(false);
+        return;
       }
+
+      const { data: chat, error } = await supabase
+        .from('chats')
+        .insert({
+          name: chatName.trim(),
+          mode,
+          questions: finalQuestions,
+          password: hasPassword ? password : null,
+          max_players: maxPlayers,
+          min_players: minPlayers,
+          created_by: user.id
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Автоматически присоединить создателя к комнате
+      await supabase
+        .from('chat_players')
+        .insert({
+          chat_id: chat.id,
+          user_id: user.id
+        });
+
+      onSuccess();
+    } catch (error: any) {
+      console.error('Error creating chat:', error);
+      alert('Ошибка при создании комнаты');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -81,10 +107,10 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
         <h1 className="text-2xl font-bold text-white">Создать комнату</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Chat Name */}
-          <div className="gradient-card rounded-2xl p-6">
+          <div className="glass-card rounded-2xl p-6">
             <label className="block text-sm font-medium text-white/90 mb-3">
               Название комнаты
             </label>
@@ -99,7 +125,7 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
           </div>
 
           {/* Player Settings */}
-          <div className="gradient-card rounded-2xl p-6">
+          <div className="glass-card rounded-2xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Users className="w-5 h-5" />
               Настройки игроков
@@ -131,7 +157,7 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
           </div>
 
           {/* Password */}
-          <div className="gradient-card rounded-2xl p-6">
+          <div className="glass-card rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                 <Lock className="w-5 h-5" />
@@ -161,7 +187,7 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
           </div>
 
           {/* Mode Selection */}
-          <div className="gradient-card rounded-2xl p-6">
+          <div className="glass-card rounded-2xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">Режим игры</h3>
             <div className="grid gap-3">
               <button
@@ -204,19 +230,19 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
 
           {/* Custom Questions */}
           {mode === 'custom' && (
-            <div className="gradient-card rounded-2xl p-6">
+            <div className="glass-card rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Ваши вопросы</h3>
                 <button
                   type="button"
                   onClick={addQuestion}
-                  className="gradient-button text-white p-2 rounded-lg hover:shadow-lg transition-all"
+                  className="glass-button text-white p-2 rounded-lg hover:shadow-lg transition-all"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="space-y-3 max-h-40 overflow-y-auto">
+              <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar">
                 {questions.map((question, index) => (
                   <div key={index} className="flex gap-2">
                     <input
@@ -244,9 +270,17 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onCreate }) => {
           {/* Submit Button */}
           <button
             type="submit"
-            className="w-full gradient-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all"
+            disabled={loading}
+            className="w-full glass-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all disabled:opacity-50"
           >
-            Создать комнату
+            {loading ? (
+              <div className="flex items-center justify-center gap-2">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                Создание...
+              </div>
+            ) : (
+              'Создать комнату'
+            )}
           </button>
         </form>
       </div>

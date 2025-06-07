@@ -9,7 +9,133 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      answers: {
+        Row: {
+          answer: string
+          chat_id: string
+          created_at: string | null
+          id: string
+          question_index: number
+          user_id: string
+        }
+        Insert: {
+          answer: string
+          chat_id: string
+          created_at?: string | null
+          id?: string
+          question_index: number
+          user_id: string
+        }
+        Update: {
+          answer?: string
+          chat_id?: string
+          created_at?: string | null
+          id?: string
+          question_index?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "answers_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_players: {
+        Row: {
+          chat_id: string
+          id: string
+          joined_at: string | null
+          user_id: string
+        }
+        Insert: {
+          chat_id: string
+          id?: string
+          joined_at?: string | null
+          user_id: string
+        }
+        Update: {
+          chat_id?: string
+          id?: string
+          joined_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_players_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chats: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          id: string
+          is_started: boolean
+          max_players: number
+          min_players: number
+          mode: string
+          name: string
+          password: string | null
+          questions: string[] | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by: string
+          id?: string
+          is_started?: boolean
+          max_players?: number
+          min_players?: number
+          mode: string
+          name: string
+          password?: string | null
+          questions?: string[] | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          id?: string
+          is_started?: boolean
+          max_players?: number
+          min_players?: number
+          mode?: string
+          name?: string
+          password?: string | null
+          questions?: string[] | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string | null
+          id: string
+          updated_at: string | null
+          username: string
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          updated_at?: string | null
+          username: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          updated_at?: string | null
+          username?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

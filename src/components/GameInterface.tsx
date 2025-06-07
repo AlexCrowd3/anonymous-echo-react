@@ -1,75 +1,180 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Send, Users, MessageCircle, Play } from 'lucide-react';
-import { Chat, User } from '../pages/Index';
+import { WaitingAnimation } from './WaitingAnimation';
+import { supabase } from '@/integrations/supabase/client';
 
 interface GameInterfaceProps {
-  chat: Chat;
-  user: User;
+  chatId: string;
   onBack: () => void;
-  onUpdateChat: (chat: Chat) => void;
 }
 
 export const GameInterface: React.FC<GameInterfaceProps> = ({
-  chat,
-  user,
-  onBack,
-  onUpdateChat
+  chatId,
+  onBack
 }) => {
+  const [chat, setChat] = useState<any>(null);
   const [currentAnswer, setCurrentAnswer] = useState('');
-  const [userAnswers, setUserAnswers] = useState<string[]>([]);
+  const [userAnswers, setUserAnswers] = useState<any[]>([]);
+  const [allAnswers, setAllAnswers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
-  const canStartGame = chat.players.length >= chat.minPlayers && !chat.isStarted;
-  const currentQuestion = chat.questions[chat.currentQuestionIndex];
-  const isLastQuestion = chat.currentQuestionIndex >= chat.questions.length - 1;
+  useEffect(() => {
+    fetchChatData();
+    fetchAnswers();
 
-  const handleStartGame = () => {
-    const updatedChat = { ...chat, isStarted: true };
-    onUpdateChat(updatedChat);
+    // Subscribe to realtime changes
+    const channel = supabase
+      .channel(`chat-${chatId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chat_players',
+        filter: `chat_id=eq.${chatId}`
+      }, () => {
+        fetchChatData();
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'answers',
+        filter: `chat_id=eq.${chatId}`
+      }, () => {
+        fetchAnswers();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [chatId]);
+
+  const fetchChatData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('chats')
+        .select(`
+          *,
+          chat_players (
+            user_id,
+            profiles (username)
+          )
+        `)
+        .eq('id', chatId)
+        .single();
+
+      if (error) throw error;
+
+      const chatWithPlayerInfo = {
+        ...data,
+        player_count: data.chat_players?.length || 0,
+        players: data.chat_players?.map((cp: any) => cp.profiles?.username || 'User') || []
+      };
+
+      setChat(chatWithPlayerInfo);
+    } catch (error) {
+      console.error('Error fetching chat:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSubmitAnswer = () => {
-    if (currentAnswer.trim()) {
-      const newAnswers = [...userAnswers, currentAnswer.trim()];
-      setUserAnswers(newAnswers);
-      setCurrentAnswer('');
+  const fetchAnswers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('answers')
+        .select('*')
+        .eq('chat_id', chatId)
+        .order('created_at', { ascending: true });
 
-      const updatedChat = { ...chat };
-      if (!updatedChat.answers[user.id]) {
-        updatedChat.answers[user.id] = [];
+      if (error) throw error;
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const myAnswers = data?.filter(a => a.user_id === user.id) || [];
+        setUserAnswers(myAnswers);
       }
-      updatedChat.answers[user.id].push(currentAnswer.trim());
 
-      onUpdateChat(updatedChat);
+      setAllAnswers(data || []);
+    } catch (error) {
+      console.error('Error fetching answers:', error);
+    }
+  };
+
+  const handleStartGame = async () => {
+    try {
+      const { error } = await supabase
+        .from('chats')
+        .update({ is_started: true })
+        .eq('id', chatId);
+
+      if (error) throw error;
+      
+      setChat({ ...chat, is_started: true });
+    } catch (error) {
+      console.error('Error starting game:', error);
+    }
+  };
+
+  const handleSubmitAnswer = async () => {
+    if (!currentAnswer.trim()) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Пользователь не авторизован');
+
+      const { error } = await supabase
+        .from('answers')
+        .insert({
+          chat_id: chatId,
+          user_id: user.id,
+          question_index: currentQuestionIndex,
+          answer: currentAnswer.trim()
+        });
+
+      if (error) throw error;
+
+      setCurrentAnswer('');
+      fetchAnswers();
+    } catch (error) {
+      console.error('Error submitting answer:', error);
     }
   };
 
   const handleNextQuestion = () => {
-    if (!isLastQuestion) {
-      const updatedChat = { ...chat };
-      updatedChat.currentQuestionIndex++;
-      onUpdateChat(updatedChat);
+    if (currentQuestionIndex < (chat?.questions?.length || 0) - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
     }
   };
 
-  const getAllAnswersForCurrentQuestion = () => {
-    const answers: string[] = [];
-    Object.values(chat.answers).forEach(userAnswers => {
-      if (userAnswers[chat.currentQuestionIndex]) {
-        answers.push(userAnswers[chat.currentQuestionIndex]);
-      }
-    });
-    return answers;
-  };
+  if (loading) {
+    return (
+      <div className="h-screen flex justify-center items-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+      </div>
+    );
+  }
 
-  const allAnswers = getAllAnswersForCurrentQuestion();
-  const hasAnswered = userAnswers.length > chat.currentQuestionIndex;
+  if (!chat) {
+    return (
+      <div className="h-screen flex justify-center items-center">
+        <p className="text-white">Комната не найдена</p>
+      </div>
+    );
+  }
 
-  if (!chat.isStarted) {
+  const canStartGame = chat.player_count >= chat.min_players && !chat.is_started;
+  const currentQuestion = chat.questions?.[currentQuestionIndex];
+  const isLastQuestion = currentQuestionIndex >= (chat.questions?.length || 0) - 1;
+  const hasAnswered = userAnswers.some(a => a.question_index === currentQuestionIndex);
+  const currentQuestionAnswers = allAnswers.filter(a => a.question_index === currentQuestionIndex);
+
+  if (!chat.is_started) {
     return (
       <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden">
         <div className="w-full max-w-md">
-          <div className="gradient-card rounded-2xl p-8 text-center">
+          <div className="glass-card rounded-2xl p-8 text-center">
             <div className="flex items-center justify-center mb-4">
               <button
                 onClick={onBack}
@@ -84,22 +189,19 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
             <div className="bg-white/10 rounded-xl p-4 mb-6">
               <div className="flex items-center justify-center gap-2 text-white/80 mb-2">
                 <Users className="w-4 h-4" />
-                <span>{chat.players.length}/{chat.maxPlayers} игроков</span>
+                <span>{chat.player_count}/{chat.max_players} игроков</span>
               </div>
               <div className="text-sm text-white/60">
                 Игроки: {chat.players.join(', ')}
               </div>
             </div>
 
-            {chat.players.length < chat.minPlayers ? (
-              <div className="text-center">
-                <div className="text-white/80 mb-4">
-                  Ожидание игроков...
-                </div>
-                <div className="text-sm text-white/60">
-                  Нужно еще {chat.minPlayers - chat.players.length} игроков для начала
-                </div>
-              </div>
+            {chat.player_count < chat.min_players ? (
+              <WaitingAnimation
+                currentPlayers={chat.player_count}
+                minPlayers={chat.min_players}
+                maxPlayers={chat.max_players}
+              />
             ) : (
               <div className="text-center">
                 <div className="text-white/80 mb-6">
@@ -107,7 +209,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
                 </div>
                 <button
                   onClick={handleStartGame}
-                  className="gradient-button text-white py-3 px-8 rounded-xl font-medium hover:shadow-lg transition-all flex items-center gap-2 mx-auto"
+                  className="glass-button text-white py-3 px-8 rounded-xl font-medium hover:shadow-lg transition-all flex items-center gap-2 mx-auto"
                 >
                   <Play className="w-5 h-5" />
                   Начать игру
@@ -123,7 +225,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
   return (
     <div className="h-screen flex flex-col p-4 overflow-hidden">
       {/* Header */}
-      <div className="gradient-card rounded-2xl p-4 mb-4">
+      <div className="glass-card rounded-2xl p-4 mb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
@@ -137,18 +239,18 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
               <div className="flex items-center gap-4 text-sm text-white/70">
                 <div className="flex items-center gap-1">
                   <Users className="w-4 h-4" />
-                  <span>{chat.players.length} игроков</span>
+                  <span>{chat.player_count} игроков</span>
                 </div>
-                <span>Вопрос {chat.currentQuestionIndex + 1} из {chat.questions.length}</span>
+                <span>Вопрос {currentQuestionIndex + 1} из {chat.questions?.length || 0}</span>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-4">
+      <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
         {/* Current Question */}
-        <div className="gradient-card rounded-2xl p-6 border border-white/30">
+        <div className="glass-card rounded-2xl p-6 border border-white/30">
           <div className="flex items-start gap-3">
             <MessageCircle className="w-6 h-6 text-white flex-shrink-0 mt-1" />
             <div>
@@ -160,7 +262,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
 
         {/* Answer Input or Submitted Status */}
         {!hasAnswered ? (
-          <div className="gradient-card rounded-2xl p-6">
+          <div className="glass-card rounded-2xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">Ваш ответ</h3>
             <div className="flex gap-3">
               <textarea
@@ -173,14 +275,14 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
               <button
                 onClick={handleSubmitAnswer}
                 disabled={!currentAnswer.trim()}
-                className="gradient-button text-white p-3 rounded-xl hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className="glass-button text-white p-3 rounded-xl hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 <Send className="w-5 h-5" />
               </button>
             </div>
           </div>
         ) : (
-          <div className="gradient-card rounded-2xl p-6 border border-green-400/30 bg-green-500/10">
+          <div className="glass-card rounded-2xl p-6 border border-green-400/30 bg-green-500/10">
             <div className="text-center">
               <h3 className="text-lg font-semibold text-white mb-2">Ответ отправлен!</h3>
               <p className="text-white/80">Ждем ответов от других игроков...</p>
@@ -189,18 +291,18 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
         )}
 
         {/* All Answers */}
-        {allAnswers.length > 0 && (
-          <div className="gradient-card rounded-2xl p-6">
+        {currentQuestionAnswers.length > 0 && (
+          <div className="glass-card rounded-2xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">
-              Анонимные ответы ({allAnswers.length})
+              Анонимные ответы ({currentQuestionAnswers.length})
             </h3>
-            <div className="space-y-3 max-h-40 overflow-y-auto">
-              {allAnswers.map((answer, index) => (
+            <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar">
+              {currentQuestionAnswers.map((answer, index) => (
                 <div
                   key={index}
                   className="bg-white/10 p-4 rounded-xl border border-white/20"
                 >
-                  <p className="text-white/90 leading-relaxed">{answer}</p>
+                  <p className="text-white/90 leading-relaxed">{answer.answer}</p>
                 </div>
               ))}
             </div>
@@ -213,19 +315,19 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
         {hasAnswered && !isLastQuestion && (
           <button
             onClick={handleNextQuestion}
-            className="w-full gradient-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all"
+            className="w-full glass-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all"
           >
             Следующий вопрос
           </button>
         )}
 
         {hasAnswered && isLastQuestion && (
-          <div className="gradient-card rounded-2xl p-6 text-center border border-green-400/30 bg-green-500/10">
+          <div className="glass-card rounded-2xl p-6 text-center border border-green-400/30 bg-green-500/10">
             <h3 className="text-xl font-bold text-white mb-2">Игра завершена!</h3>
             <p className="text-white/80 mb-4">Спасибо за участие в анонимном чате</p>
             <button
               onClick={onBack}
-              className="gradient-button text-white py-3 px-6 rounded-xl font-medium hover:shadow-lg transition-all"
+              className="glass-button text-white py-3 px-6 rounded-xl font-medium hover:shadow-lg transition-all"
             >
               Вернуться в меню
             </button>
