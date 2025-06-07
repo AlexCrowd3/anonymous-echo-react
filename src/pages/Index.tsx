@@ -21,6 +21,10 @@ export type Chat = {
   answers: { [key: string]: string[] };
   currentQuestionIndex: number;
   isActive: boolean;
+  password?: string;
+  maxPlayers: number;
+  minPlayers: number;
+  isStarted: boolean;
 };
 
 export type GameState = 'auth' | 'menu' | 'create' | 'join' | 'playing';
@@ -58,7 +62,14 @@ const Index = () => {
     setCurrentChat(null);
   };
 
-  const handleCreateChat = (chatName: string, mode: 'custom' | 'database', questions?: string[]) => {
+  const handleCreateChat = (
+    chatName: string, 
+    mode: 'custom' | 'database', 
+    questions?: string[], 
+    password?: string,
+    maxPlayers?: number,
+    minPlayers?: number
+  ) => {
     const databaseQuestions = [
       "Какая самая странная еда, которую ты когда-либо пробовал?",
       "Если бы ты мог иметь любую суперсилу, какую бы выбрал?",
@@ -75,7 +86,11 @@ const Index = () => {
       players: [user!.username],
       answers: {},
       currentQuestionIndex: 0,
-      isActive: false
+      isActive: false,
+      password,
+      maxPlayers: maxPlayers || 10,
+      minPlayers: minPlayers || 2,
+      isStarted: false
     };
 
     setChats([...chats, newChat]);
@@ -83,7 +98,17 @@ const Index = () => {
     setGameState('playing');
   };
 
-  const handleJoinChat = (chat: Chat) => {
+  const handleJoinChat = (chat: Chat, password?: string) => {
+    if (chat.password && chat.password !== password) {
+      alert('Неверный пароль!');
+      return;
+    }
+
+    if (chat.players.length >= chat.maxPlayers) {
+      alert('Комната переполнена!');
+      return;
+    }
+
     if (!chat.players.includes(user!.username)) {
       chat.players.push(user!.username);
     }
@@ -98,14 +123,14 @@ const Index = () => {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <div className="min-h-screen bg-gradient-to-br from-blue-500 via-blue-600 to-blue-700">
         <AuthForm onLogin={handleLogin} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-blue-500 via-blue-600 to-blue-700">
       {gameState === 'menu' && (
         <GameMenu
           user={user}

@@ -1,15 +1,13 @@
 
 import React, { useState } from 'react';
-import { User, LogIn } from 'lucide-react';
+import { User } from 'lucide-react';
 
 interface AuthFormProps {
   onLogin: (username: string) => void;
 }
 
 export const AuthForm: React.FC<AuthFormProps> = ({ onLogin }) => {
-  const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,66 +17,43 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="bg-slate-800/50 backdrop-blur-lg rounded-2xl p-8 w-full max-w-md border border-slate-700/50 shadow-2xl">
+    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden">
+      <div className="gradient-card rounded-3xl p-8 w-full max-w-sm shadow-2xl">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
-            <User className="w-8 h-8 text-white" />
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-white/20 rounded-full mb-6">
+            <User className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">Ano</h1>
-          <p className="text-slate-400">Анонимные чаты с вопросами</p>
+          <h1 className="text-4xl font-bold text-white mb-2">ANO</h1>
+          <p className="text-white/80 text-lg">Анонимные чаты</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Имя пользователя
-            </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+              className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all text-lg"
               placeholder="Введите ваше имя"
               required
             />
           </div>
 
-          {isRegistering && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Пароль
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
-                placeholder="Введите пароль"
-                required
-              />
-            </div>
-          )}
-
           <button
             type="submit"
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-4 rounded-lg font-medium hover:from-purple-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-slate-800 transition-all flex items-center justify-center gap-2"
+            className="w-full gradient-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all"
           >
-            <LogIn className="w-5 h-5" />
-            {isRegistering ? 'Зарегистрироваться' : 'Войти'}
+            Играть
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <button
-            onClick={() => setIsRegistering(!isRegistering)}
-            className="text-purple-400 hover:text-purple-300 transition-colors"
-          >
-            {isRegistering 
-              ? 'Уже есть аккаунт? Войти' 
-              : 'Нет аккаунта? Зарегистрироваться'
-            }
-          </button>
+        <div className="mt-8 text-center">
+          <div className="inline-flex items-center justify-center w-8 h-8 bg-white/20 rounded-full mb-4">
+            <span className="text-white text-sm">i</span>
+          </div>
+          <p className="text-white/70 text-sm leading-relaxed">
+            В этой игре вы сможете узнать что думают о вас ваши друзья, и анонимно высказать мнение о других
+          </p>
         </div>
       </div>
     </div>

@@ -17,23 +17,23 @@ export const GameMenu: React.FC<GameMenuProps> = ({
   onJoinChat
 }) => {
   return (
-    <div className="min-h-screen p-4">
-      <div className="max-w-2xl mx-auto">
+    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden">
+      <div className="w-full max-w-md">
         {/* Header */}
-        <div className="bg-slate-800/50 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-slate-700/50">
+        <div className="gradient-card rounded-2xl p-6 mb-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
                 <MessageCircle className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Добро пожаловать, {user.username}!</h1>
-                <p className="text-slate-400">Выберите действие для начала игры</p>
+                <h1 className="text-xl font-bold text-white">Привет, {user.username}!</h1>
+                <p className="text-white/70 text-sm">Выберите действие</p>
               </div>
             </div>
             <button
               onClick={onLogout}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+              className="p-2 text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-all"
               title="Выйти"
             >
               <LogOut className="w-5 h-5" />
@@ -42,19 +42,19 @@ export const GameMenu: React.FC<GameMenuProps> = ({
         </div>
 
         {/* Menu Options */}
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-4 mb-6">
           <button
             onClick={onCreateChat}
-            className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white p-6 rounded-2xl transition-all transform hover:scale-105 border border-purple-400/20 shadow-lg hover:shadow-purple-500/25"
+            className="w-full gradient-button text-white p-6 rounded-2xl transition-all hover:shadow-lg"
           >
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-                <Plus className="w-8 h-8" />
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                <Plus className="w-6 h-6" />
               </div>
-              <div className="text-center">
-                <h3 className="text-xl font-bold mb-2">Создать чат</h3>
-                <p className="text-purple-100 text-sm">
-                  Создайте новый анонимный чат с вопросами
+              <div className="text-left">
+                <h3 className="text-lg font-bold">Создать комнату</h3>
+                <p className="text-white/80 text-sm">
+                  Создайте новую анонимную комнату
                 </p>
               </div>
             </div>
@@ -62,16 +62,16 @@ export const GameMenu: React.FC<GameMenuProps> = ({
 
           <button
             onClick={onJoinChat}
-            className="bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white p-6 rounded-2xl transition-all transform hover:scale-105 border border-pink-400/20 shadow-lg hover:shadow-pink-500/25"
+            className="w-full gradient-button text-white p-6 rounded-2xl transition-all hover:shadow-lg"
           >
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-                <Users className="w-8 h-8" />
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                <Users className="w-6 h-6" />
               </div>
-              <div className="text-center">
-                <h3 className="text-xl font-bold mb-2">Присоединиться</h3>
-                <p className="text-pink-100 text-sm">
-                  Найдите и присоединитесь к существующему чату
+              <div className="text-left">
+                <h3 className="text-lg font-bold">Присоединиться</h3>
+                <p className="text-white/80 text-sm">
+                  Найдите и присоединитесь к комнате
                 </p>
               </div>
             </div>
@@ -79,13 +79,17 @@ export const GameMenu: React.FC<GameMenuProps> = ({
         </div>
 
         {/* Info Card */}
-        <div className="mt-6 bg-slate-800/30 backdrop-blur-lg rounded-2xl p-6 border border-slate-700/30">
-          <h3 className="text-lg font-semibold text-white mb-3">Как играть?</h3>
-          <div className="space-y-2 text-slate-300 text-sm">
-            <p>• <span className="text-purple-400">Режим 1:</span> Создайте свои вопросы и отвечайте анонимно</p>
-            <p>• <span className="text-pink-400">Режим 2:</span> Отвечайте на 5 случайных вопросов из базы</p>
+        <div className="gradient-card rounded-2xl p-6">
+          <div className="text-center mb-4">
+            <div className="inline-flex items-center justify-center w-8 h-8 bg-white/20 rounded-full mb-3">
+              <span className="text-white text-sm">i</span>
+            </div>
+          </div>
+          <div className="space-y-2 text-white/80 text-sm leading-relaxed">
+            <p>• <span className="text-white">Режим 1:</span> Создайте свои вопросы</p>
+            <p>• <span className="text-white">Режим 2:</span> 5 случайных вопросов</p>
             <p>• Все ответы полностью анонимны</p>
-            <p>• Пригласите друзей для большего веселья!</p>
+            <p>• Пригласите друзей для веселья!</p>
           </div>
         </div>
       </div>
