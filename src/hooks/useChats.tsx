@@ -37,7 +37,16 @@ export const useChats = () => {
       if (error) throw error;
 
       const chatsWithPlayerInfo = data?.map(chat => ({
-        ...chat,
+        id: chat.id,
+        name: chat.name,
+        mode: chat.mode as 'custom' | 'database',
+        questions: chat.questions || [],
+        password: chat.password || undefined,
+        max_players: chat.max_players,
+        min_players: chat.min_players,
+        is_started: chat.is_started,
+        created_by: chat.created_by,
+        created_at: chat.created_at,
         player_count: chat.chat_players?.length || 0,
         players: chat.chat_players?.map((cp: any) => cp.profiles?.username || 'User') || []
       })) || [];

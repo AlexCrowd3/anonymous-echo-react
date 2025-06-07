@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface AuthFormProps {
@@ -9,12 +9,21 @@ interface AuthFormProps {
 
 export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const checkUserExists = async (username: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', username)
+      .single();
+    
+    return !error && data;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,12 +32,40 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
     try {
       if (isLogin) {
+        // For login, we need to find the user's email first
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', username)
+          .single();
+
+        if (!profile) {
+          throw new Error('Пользователь не найден');
+        }
+
+        // Get the user's email from auth.users
+        const { data: user } = await supabase.auth.admin.getUserById(profile.id);
+        
+        if (!user.user?.email) {
+          throw new Error('Ошибка входа');
+        }
+
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: user.user.email,
           password,
         });
+        
         if (error) throw error;
       } else {
+        // Check if user already exists
+        const userExists = await checkUserExists(username);
+        if (userExists) {
+          throw new Error('Пользователь с таким именем уже существует');
+        }
+
+        // Create a dummy email for registration
+        const email = `${username}@ano.local`;
+        
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -38,6 +75,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
             }
           }
         });
+        
         if (error) throw error;
       }
       onSuccess();
@@ -49,7 +87,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden bg-blue-600">
+    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden bg-slate-900">
       <div className="glass-card rounded-3xl p-8 w-full max-w-sm shadow-2xl">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-white/20 rounded-full mb-6">
@@ -60,28 +98,14 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
-                placeholder="Имя пользователя"
-                required
-              />
-            </div>
-          )}
-
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
+            <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               className="w-full pl-12 pr-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
-              placeholder="Email"
+              placeholder="Имя пользователя"
               required
             />
           </div>
