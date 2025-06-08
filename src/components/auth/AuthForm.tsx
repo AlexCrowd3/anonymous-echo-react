@@ -16,13 +16,19 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   const [error, setError] = useState('');
 
   const checkUserExists = async (username: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('username', username)
-      .single();
-    
-    return !error && data;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('username', username)
+        .maybeSingle();
+      
+      console.log('User check result:', { data, error, username });
+      return data !== null;
+    } catch (err) {
+      console.error('Error checking user:', err);
+      return false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,19 +36,23 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
     setLoading(true);
     setError('');
 
+    console.log('Starting auth process:', { isLogin, username });
+
     try {
       if (isLogin) {
         // Для входа проверяем, существует ли пользователь
         const userExists = await checkUserExists(username);
+        console.log('User exists for login:', userExists);
+        
         if (!userExists) {
           throw new Error('Пользователь не найден');
         }
 
-        // Используем валидный домен email для входа
-        const email = `${username}@example.com`;
+        // Используем фиктивный адрес для входа
+        const fakeEmail = `${username}@testdomain.com`;
         
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: fakeEmail,
           password,
         });
         
@@ -53,18 +63,24 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           }
           throw new Error('Ошибка входа в систему');
         }
+        
+        console.log('Login successful');
       } else {
         // Для регистрации проверяем, что пользователь не существует
         const userExists = await checkUserExists(username);
+        console.log('User exists for registration:', userExists);
+        
         if (userExists) {
           throw new Error('Пользователь с таким именем уже существует');
         }
 
-        // Создаем email с валидным доменом для регистрации
-        const email = `${username}@example.com`;
+        // Создаем фиктивный адрес для регистрации
+        const fakeEmail = `${username}@testdomain.com`;
+        
+        console.log('Attempting registration with:', { email: fakeEmail, username });
         
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: fakeEmail,
           password,
           options: {
             data: {
@@ -81,7 +97,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           if (error.message.includes('User already registered')) {
             throw new Error('Пользователь с таким именем уже существует');
           }
-          throw new Error('Ошибка регистрации');
+          throw new Error('Ошибка регистрации: ' + error.message);
         }
 
         console.log('Registration successful:', data);
@@ -116,6 +132,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
               className="w-full pl-12 pr-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
               placeholder="Имя пользователя"
               required
+              minLength={3}
             />
           </div>
 
@@ -128,6 +145,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
               className="w-full pl-12 pr-12 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
               placeholder="Пароль"
               required
+              minLength={6}
             />
             <button
               type="button"
