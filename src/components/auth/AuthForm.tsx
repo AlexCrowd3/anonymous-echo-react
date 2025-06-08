@@ -32,26 +32,17 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
     try {
       if (isLogin) {
-        // For login, we need to find the user's email first
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('username', username)
-          .single();
-
-        if (!profile) {
+        // Для входа проверяем, существует ли пользователь
+        const userExists = await checkUserExists(username);
+        if (!userExists) {
           throw new Error('Пользователь не найден');
         }
 
-        // Get the user's email from auth.users
-        const { data: user } = await supabase.auth.admin.getUserById(profile.id);
+        // Используем фиктивный email для входа
+        const email = `${username}@ano.local`;
         
-        if (!user.user?.email) {
-          throw new Error('Ошибка входа в систему');
-        }
-
         const { error } = await supabase.auth.signInWithPassword({
-          email: user.user.email,
+          email,
           password,
         });
         
@@ -62,13 +53,13 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           throw new Error('Ошибка входа в систему');
         }
       } else {
-        // Check if user already exists
+        // Для регистрации проверяем, что пользователь не существует
         const userExists = await checkUserExists(username);
         if (userExists) {
           throw new Error('Пользователь с таким именем уже существует');
         }
 
-        // Create a dummy email for registration
+        // Создаем фиктивный email для регистрации
         const email = `${username}@ano.local`;
         
         const { error } = await supabase.auth.signUp({
@@ -85,11 +76,15 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           if (error.message.includes('Password')) {
             throw new Error('Пароль должен быть не менее 6 символов');
           }
+          if (error.message.includes('email')) {
+            throw new Error('Ошибка создания аккаунта');
+          }
           throw new Error('Ошибка регистрации');
         }
       }
       onSuccess();
     } catch (error: any) {
+      console.error('Auth error:', error);
       setError(error.message);
     } finally {
       setLoading(false);
