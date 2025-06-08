@@ -47,7 +47,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         const { data: user } = await supabase.auth.admin.getUserById(profile.id);
         
         if (!user.user?.email) {
-          throw new Error('Ошибка входа');
+          throw new Error('Ошибка входа в систему');
         }
 
         const { error } = await supabase.auth.signInWithPassword({
@@ -55,7 +55,12 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           password,
         });
         
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('Invalid login credentials')) {
+            throw new Error('Неверное имя пользователя или пароль');
+          }
+          throw new Error('Ошибка входа в систему');
+        }
       } else {
         // Check if user already exists
         const userExists = await checkUserExists(username);
@@ -76,7 +81,12 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           }
         });
         
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('Password')) {
+            throw new Error('Пароль должен быть не менее 6 символов');
+          }
+          throw new Error('Ошибка регистрации');
+        }
       }
       onSuccess();
     } catch (error: any) {

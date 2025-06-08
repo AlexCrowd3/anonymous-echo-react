@@ -99,7 +99,7 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
         <SearchBar
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Поиск комнат..."
+          placeholder="Поиск комнат по названию..."
         />
       </div>
 

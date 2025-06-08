@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Send, Users, MessageCircle, Play } from 'lucide-react';
+import { ArrowLeft, Send, Users, MessageCircle, Play, Clock } from 'lucide-react';
 import { WaitingAnimation } from './WaitingAnimation';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -19,6 +19,8 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
   const [allAnswers, setAllAnswers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [discussionTimeLeft, setDiscussionTimeLeft] = useState(180); // 3 minutes
+  const [isDiscussionActive, setIsDiscussionActive] = useState(false);
 
   useEffect(() => {
     fetchChatData();
@@ -43,12 +45,32 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
       }, () => {
         fetchAnswers();
       })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chats',
+        filter: `id=eq.${chatId}`
+      }, () => {
+        fetchChatData();
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [chatId]);
+
+  // Timer effect for discussion
+  useEffect(() => {
+    if (isDiscussionActive && discussionTimeLeft > 0) {
+      const timer = setTimeout(() => {
+        setDiscussionTimeLeft(discussionTimeLeft - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (isDiscussionActive && discussionTimeLeft === 0) {
+      handleNextQuestion();
+    }
+  }, [isDiscussionActive, discussionTimeLeft]);
 
   const fetchChatData = async () => {
     try {
@@ -112,6 +134,8 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
       if (error) throw error;
       
       setChat({ ...chat, is_started: true });
+      setIsDiscussionActive(true);
+      setDiscussionTimeLeft(180);
     } catch (error) {
       console.error('Error starting game:', error);
     }
@@ -142,10 +166,35 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
     }
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = async () => {
     if (currentQuestionIndex < (chat?.questions?.length || 0) - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setDiscussionTimeLeft(180);
+      setIsDiscussionActive(true);
+    } else {
+      // Game ended, delete chat
+      await deleteChat();
     }
+  };
+
+  const deleteChat = async () => {
+    try {
+      const { error } = await supabase
+        .from('chats')
+        .delete()
+        .eq('id', chatId);
+
+      if (error) throw error;
+      onBack();
+    } catch (error) {
+      console.error('Error deleting chat:', error);
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   if (loading) {
@@ -224,7 +273,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
 
   return (
     <div className="h-screen flex flex-col p-4 overflow-hidden">
-      {/* Header */}
+      {/* Header with timer */}
       <div className="glass-card rounded-2xl p-4 mb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -245,6 +294,12 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
               </div>
             </div>
           </div>
+          {isDiscussionActive && (
+            <div className="flex items-center gap-2 text-white">
+              <Clock className="w-5 h-5" />
+              <span className="font-mono text-lg">{formatTime(discussionTimeLeft)}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -254,7 +309,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
           <div className="flex items-start gap-3">
             <MessageCircle className="w-6 h-6 text-white flex-shrink-0 mt-1" />
             <div>
-              <h2 className="text-lg font-semibold text-white mb-2">Текущий вопрос</h2>
+              <h2 className="text-lg font-semibold text-white mb-2">Обсуждаем вопрос</h2>
               <p className="text-white/90 text-lg leading-relaxed">{currentQuestion}</p>
             </div>
           </div>
@@ -269,7 +324,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
                 value={currentAnswer}
                 onChange={(e) => setCurrentAnswer(e.target.value)}
                 className="flex-1 px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all resize-none"
-                placeholder="Напишите то, что думаете..."
+                placeholder="Поделитесь своим мнением..."
                 rows={3}
               />
               <button
@@ -285,7 +340,7 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
           <div className="glass-card rounded-2xl p-6 border border-green-400/30 bg-green-500/10">
             <div className="text-center">
               <h3 className="text-lg font-semibold text-white mb-2">Ответ отправлен!</h3>
-              <p className="text-white/80">Ждем ответов от других игроков...</p>
+              <p className="text-white/80">Участвуйте в обсуждении...</p>
             </div>
           </div>
         )}
@@ -310,21 +365,12 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
         )}
       </div>
 
-      {/* Bottom Actions */}
-      <div className="pt-4">
-        {hasAnswered && !isLastQuestion && (
-          <button
-            onClick={handleNextQuestion}
-            className="w-full glass-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all"
-          >
-            Следующий вопрос
-          </button>
-        )}
-
-        {hasAnswered && isLastQuestion && (
+      {/* Game End Status */}
+      {isLastQuestion && discussionTimeLeft === 0 && (
+        <div className="pt-4">
           <div className="glass-card rounded-2xl p-6 text-center border border-green-400/30 bg-green-500/10">
             <h3 className="text-xl font-bold text-white mb-2">Игра завершена!</h3>
-            <p className="text-white/80 mb-4">Спасибо за участие в анонимном чате</p>
+            <p className="text-white/80 mb-4">Спасибо за участие в обсуждении</p>
             <button
               onClick={onBack}
               className="glass-button text-white py-3 px-6 rounded-xl font-medium hover:shadow-lg transition-all"
@@ -332,8 +378,8 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
               Вернуться в меню
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
