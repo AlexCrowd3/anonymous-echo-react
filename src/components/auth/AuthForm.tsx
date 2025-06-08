@@ -15,22 +15,6 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const checkUserExists = async (username: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('username', username)
-        .maybeSingle();
-      
-      console.log('User check result:', { data, error, username });
-      return data !== null;
-    } catch (err) {
-      console.error('Error checking user:', err);
-      return false;
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -40,69 +24,71 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
     try {
       if (isLogin) {
-        // Для входа проверяем, существует ли пользователь
-        const userExists = await checkUserExists(username);
-        console.log('User exists for login:', userExists);
-        
-        if (!userExists) {
+        // Логин через профили без Supabase Auth
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('username', username)
+          .maybeSingle();
+
+        if (profileError) {
+          console.error('Profile check error:', profileError);
+          throw new Error('Ошибка проверки пользователя');
+        }
+
+        if (!profile) {
           throw new Error('Пользователь не найден');
         }
 
-        // Используем фиктивный адрес для входа
-        const fakeEmail = `${username}@testdomain.com`;
-        
-        const { error } = await supabase.auth.signInWithPassword({
-          email: fakeEmail,
-          password,
-        });
-        
-        if (error) {
-          console.error('Login error:', error);
-          if (error.message.includes('Invalid login credentials')) {
-            throw new Error('Неверное имя пользователя или пароль');
-          }
-          throw new Error('Ошибка входа в систему');
+        // Простая проверка пароля (в реальном приложении нужно хеширование)
+        if (profile.password !== password) {
+          throw new Error('Неверный пароль');
         }
-        
+
         console.log('Login successful');
+        onSuccess();
       } else {
-        // Для регистрации проверяем, что пользователь не существует
-        const userExists = await checkUserExists(username);
-        console.log('User exists for registration:', userExists);
-        
-        if (userExists) {
+        // Регистрация через профили без Supabase Auth
+        const { data: existingProfile, error: checkError } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('username', username)
+          .maybeSingle();
+
+        if (checkError) {
+          console.error('Profile check error:', checkError);
+          throw new Error('Ошибка проверки пользователя');
+        }
+
+        if (existingProfile) {
           throw new Error('Пользователь с таким именем уже существует');
         }
 
-        // Создаем фиктивный адрес для регистрации
-        const fakeEmail = `${username}@testdomain.com`;
-        
-        console.log('Attempting registration with:', { email: fakeEmail, username });
-        
-        const { data, error } = await supabase.auth.signUp({
-          email: fakeEmail,
-          password,
-          options: {
-            data: {
-              username: username,
-            }
-          }
-        });
-        
-        if (error) {
-          console.error('Registration error:', error);
-          if (error.message.includes('Password')) {
-            throw new Error('Пароль должен быть не менее 6 символов');
-          }
-          if (error.message.includes('User already registered')) {
-            throw new Error('Пользователь с таким именем уже существует');
-          }
-          throw new Error('Ошибка регистрации: ' + error.message);
+        if (password.length < 6) {
+          throw new Error('Пароль должен быть не менее 6 символов');
         }
 
-        console.log('Registration successful:', data);
+        // Создаем новый профиль
+        const { data: newProfile, error: createError } = await supabase
+          .from('profiles')
+          .insert([
+            {
+              username: username,
+              password: password, // В реальном приложении нужно хеширование
+              created_at: new Date().toISOString()
+            }
+          ])
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('Registration error:', createError);
+          throw new Error('Ошибка регистрации: ' + createError.message);
+        }
+
+        console.log('Registration successful:', newProfile);
+        onSuccess();
       }
-      onSuccess();
     } catch (error: any) {
       console.error('Auth error:', error);
       setError(error.message);
