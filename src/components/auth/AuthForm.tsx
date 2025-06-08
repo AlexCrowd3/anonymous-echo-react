@@ -38,8 +38,8 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           throw new Error('Пользователь не найден');
         }
 
-        // Используем фиктивный email для входа
-        const email = `${username}@ano.local`;
+        // Используем валидный домен email для входа
+        const email = `${username}@example.com`;
         
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -47,6 +47,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         });
         
         if (error) {
+          console.error('Login error:', error);
           if (error.message.includes('Invalid login credentials')) {
             throw new Error('Неверное имя пользователя или пароль');
           }
@@ -59,10 +60,10 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           throw new Error('Пользователь с таким именем уже существует');
         }
 
-        // Создаем фиктивный email для регистрации
-        const email = `${username}@ano.local`;
+        // Создаем email с валидным доменом для регистрации
+        const email = `${username}@example.com`;
         
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -73,14 +74,17 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         });
         
         if (error) {
+          console.error('Registration error:', error);
           if (error.message.includes('Password')) {
             throw new Error('Пароль должен быть не менее 6 символов');
           }
-          if (error.message.includes('email')) {
-            throw new Error('Ошибка создания аккаунта');
+          if (error.message.includes('User already registered')) {
+            throw new Error('Пользователь с таким именем уже существует');
           }
           throw new Error('Ошибка регистрации');
         }
+
+        console.log('Registration successful:', data);
       }
       onSuccess();
     } catch (error: any) {
