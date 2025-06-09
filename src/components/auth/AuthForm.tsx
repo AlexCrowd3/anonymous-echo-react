@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -71,14 +70,12 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         // Создаем новый профиль с уникальным ID
         const { data: newProfile, error: createError } = await supabase
           .from('profiles')
-          .insert([
-            {
-              id: crypto.randomUUID(),
-              username: username,
-              password: password,
-              created_at: new Date().toISOString()
-            }
-          ])
+          .insert({
+            id: crypto.randomUUID(),
+            username: username,
+            password: password,
+            created_at: new Date().toISOString()
+          })
           .select()
           .single();
 
