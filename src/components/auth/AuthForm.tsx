@@ -24,7 +24,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
     try {
       if (isLogin) {
-        // Логин через профили без Supabase Auth
+        // Логин через профили
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('*')
@@ -40,7 +40,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           throw new Error('Пользователь не найден');
         }
 
-        // Простая проверка пароля (в реальном приложении нужно хеширование)
+        // Простая проверка пароля
         if (profile.password !== password) {
           throw new Error('Неверный пароль');
         }
@@ -48,7 +48,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         console.log('Login successful');
         onSuccess();
       } else {
-        // Регистрация через профили без Supabase Auth
+        // Регистрация через профили
         const { data: existingProfile, error: checkError } = await supabase
           .from('profiles')
           .select('username')
@@ -68,13 +68,14 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           throw new Error('Пароль должен быть не менее 6 символов');
         }
 
-        // Создаем новый профиль
+        // Создаем новый профиль с уникальным ID
         const { data: newProfile, error: createError } = await supabase
           .from('profiles')
           .insert([
             {
+              id: crypto.randomUUID(),
               username: username,
-              password: password, // В реальном приложении нужно хеширование
+              password: password,
               created_at: new Date().toISOString()
             }
           ])

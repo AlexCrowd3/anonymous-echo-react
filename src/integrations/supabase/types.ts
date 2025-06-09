@@ -119,18 +119,21 @@ export type Database = {
         Row: {
           created_at: string | null
           id: string
+          password: string | null
           updated_at: string | null
           username: string
         }
         Insert: {
           created_at?: string | null
           id: string
+          password?: string | null
           updated_at?: string | null
           username: string
         }
         Update: {
           created_at?: string | null
           id?: string
+          password?: string | null
           updated_at?: string | null
           username?: string
         }
