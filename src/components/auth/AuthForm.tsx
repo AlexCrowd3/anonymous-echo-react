@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 interface AuthFormProps {
   onSuccess: () => void;
@@ -13,6 +14,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { signIn } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +47,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         }
 
         console.log('Login successful');
+        signIn(profile);
         onSuccess();
       } else {
         // Регистрация через профили
@@ -85,6 +88,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
         }
 
         console.log('Registration successful:', newProfile);
+        signIn(newProfile);
         onSuccess();
       }
     } catch (error: any) {
