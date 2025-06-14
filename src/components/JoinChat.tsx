@@ -1,17 +1,19 @@
-
 import React, { useState } from 'react';
-import { ArrowLeft, Users, MessageCircle, Database, Gamepad2, Lock } from 'lucide-react';
+import { ArrowLeft, Users, MessageCircle, Database, Gamepad2, Lock, User as UserIcon } from 'lucide-react';
 import { SearchBar } from './SearchBar';
 import { WaitingAnimation } from './WaitingAnimation';
 import { useChats } from '../hooks/useChats';
 import { supabase } from '@/integrations/supabase/client';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 
 interface JoinChatProps {
   onBack: () => void;
-  onJoin: (chatId: string) => void;
 }
 
-export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
+export const JoinChat: React.FC<JoinChatProps> = ({ onBack }) => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const { chats, loading } = useChats();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChat, setSelectedChat] = useState<any>(null);
@@ -58,7 +60,7 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
         throw error;
       }
 
-      onJoin(chat.id);
+      navigate(`/waiting-room/${chat.id}`);
     } catch (error: any) {
       console.error('Error joining chat:', error);
       alert('Ошибка при подключении к комнате');
@@ -77,25 +79,34 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
 
   if (loading) {
     return (
-      <div className="h-screen flex justify-center items-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+      <div className="min-h-screen flex justify-center items-center bg-white">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#0092FF]"></div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col p-4 overflow-hidden">
-      <div className="flex items-center gap-4 mb-6">
+    <div className="min-h-screen flex flex-col bg-white overflow-hidden relative">
+      {/* Шапка */}
+      <header className="w-full py-4 px-4 flex justify-between items-center bg-white z-20 shadow-sm relative">
         <button
           onClick={onBack}
-          className="p-3 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition-all"
+          className="p-2 text-[#0092FF]/80 hover:text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg transition-all duration-300 group"
         >
-          <ArrowLeft className="w-6 h-6" />
+          <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
         </button>
-        <h1 className="text-2xl font-bold text-white">Присоединиться</h1>
-      </div>
+        
+        <div className="absolute left-1/2 transform -translate-x-1/2">
+          <h1 className="text-xl font-bold text-[#0092FF]">Присоединиться</h1>
+        </div>
 
-      <div className="mb-4">
+        <div className="w-10 h-10 rounded-full bg-[#0092FF]/10 flex items-center justify-center">
+          <UserIcon className="w-5 h-5 text-[#0092FF]" />
+        </div>
+      </header>
+
+      {/* Поиск */}
+      <div className="px-4 pt-2 pb-4 z-20">
         <SearchBar
           value={searchQuery}
           onChange={setSearchQuery}
@@ -103,45 +114,46 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="space-y-4">
-          {filteredChats.length === 0 ? (
-            <div className="glass-card rounded-2xl p-8 text-center">
-              <MessageCircle className="w-12 h-12 text-white/60 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-white mb-2">
-                {searchQuery ? 'Ничего не найдено' : 'Нет доступных комнат'}
-              </h3>
-              <p className="text-white/70">
-                {searchQuery ? 'Попробуйте изменить поисковый запрос' : 'Создайте новую комнату или подождите'}
-              </p>
-            </div>
-          ) : (
-            filteredChats.map((chat) => (
+      {/* Список комнат */}
+      <div className="flex-1 overflow-y-auto px-4 pb-24 z-10">
+        {filteredChats.length === 0 ? (
+          <div className="bg-white/90 rounded-2xl p-8 text-center border border-[#0092FF]/20 shadow-sm">
+            <MessageCircle className="w-12 h-12 text-[#0092FF]/60 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {searchQuery ? 'Ничего не найдено' : 'Нет доступных комнат'}
+            </h3>
+            <p className="text-gray-600">
+              {searchQuery ? 'Попробуйте изменить поисковый запрос' : 'Создайте новую комнату или подождите'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredChats.map((chat) => (
               <div
                 key={chat.id}
-                className="glass-card rounded-2xl p-6 hover:bg-white/15 transition-all"
+                className="bg-white/90 rounded-xl p-5 border border-[#0092FF]/20 shadow-sm hover:shadow-md transition-all hover:border-[#0092FF]/40"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold text-white">{chat.name}</h3>
+                      <h3 className="text-lg font-semibold text-gray-900">{chat.name}</h3>
                       {chat.password && (
-                        <Lock className="w-4 h-4 text-white/60" />
+                        <Lock className="w-4 h-4 text-[#0092FF]/60" />
                       )}
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
                         chat.mode === 'custom' 
-                          ? 'bg-white/20 text-white' 
-                          : 'bg-white/15 text-white/90'
+                          ? 'bg-[#0092FF]/20 text-[#0092FF]' 
+                          : 'bg-gray-100 text-gray-700'
                       }`}>
                         {chat.mode === 'custom' ? <Gamepad2 className="w-3 h-3" /> : <Database className="w-3 h-3" />}
                         {chat.mode === 'custom' ? 'Свои вопросы' : 'Из базы'}
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-4 text-sm text-white/70 mb-2">
+                    <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
                       <div className="flex items-center gap-1">
                         <Users className="w-4 h-4" />
-                        <span>{chat.player_count}/{chat.max_players} игроков</span>
+                        <span>{chat.player_count}/{chat.max_players}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <MessageCircle className="w-4 h-4" />
@@ -149,10 +161,10 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
                       </div>
                     </div>
 
-                    {chat.players.length > 0 && (
+                    {chat.players?.length > 0 && (
                       <div className="mb-2">
-                        <span className="text-xs text-white/50">Игроки: </span>
-                        <span className="text-xs text-white/70">
+                        <span className="text-xs text-gray-500">Игроки: </span>
+                        <span className="text-xs text-gray-700">
                           {chat.players.join(', ')}
                         </span>
                       </div>
@@ -160,7 +172,7 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
 
                     {chat.is_started ? (
                       <div className="mt-2">
-                        <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded-full">
+                        <span className="text-xs bg-green-500/10 text-green-700 px-2 py-1 rounded-full">
                           Игра началась
                         </span>
                       </div>
@@ -174,7 +186,7 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
                       </div>
                     ) : (
                       <div className="mt-2">
-                        <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded-full">
+                        <span className="text-xs bg-blue-500/10 text-blue-700 px-2 py-1 rounded-full">
                           Готов к запуску
                         </span>
                       </div>
@@ -184,34 +196,34 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
                   <button
                     onClick={() => handleJoinClick(chat)}
                     disabled={chat.player_count >= chat.max_players || joining}
-                    className="glass-button text-white px-6 py-2 rounded-xl font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-[#0092FF] text-white px-4 py-2 rounded-lg font-medium hover:bg-[#007acc] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {joining ? (
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mx-auto"></div>
                     ) : (
                       'Войти'
                     )}
                   </button>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Password Modal */}
+      {/* Модальное окно пароля */}
       {selectedChat && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="glass-card rounded-2xl p-6 w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Lock className="w-5 h-5" />
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Lock className="w-5 h-5 text-[#0092FF]" />
               Введите пароль
             </h3>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all mb-4"
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-[#0092FF]/30 transition-all mb-4"
               placeholder="Пароль"
               onKeyPress={(e) => e.key === 'Enter' && handlePasswordSubmit()}
             />
@@ -221,14 +233,14 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
                   setSelectedChat(null);
                   setPassword('');
                 }}
-                className="flex-1 bg-white/10 text-white py-2 px-4 rounded-xl hover:bg-white/20 transition-all"
+                className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition-all"
               >
                 Отмена
               </button>
               <button
                 onClick={handlePasswordSubmit}
                 disabled={joining}
-                className="flex-1 glass-button text-white py-2 px-4 rounded-xl hover:shadow-lg transition-all disabled:opacity-50"
+                className="flex-1 bg-[#0092FF] text-white py-2 px-4 rounded-lg hover:bg-[#007acc] transition-all disabled:opacity-50"
               >
                 {joining ? (
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mx-auto"></div>
@@ -244,4 +256,4 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
   );
 };
 
-export default JoinChat
+export default JoinChat;
