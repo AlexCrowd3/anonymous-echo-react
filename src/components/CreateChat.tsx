@@ -1,22 +1,43 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Minus, Gamepad2, Database, Lock, Users } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 
-interface CreateChatProps {
-  onBack: () => void;
-  onSuccess: () => void;
-}
-
-export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onSuccess }) => {
+const CreateChat: React.FC = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [chatName, setChatName] = useState('');
-  const [mode, setMode] = useState<'custom' | 'database'>('custom');
+  const [mode, setMode] = useState<'custom' | 'ano'>('custom');
   const [questions, setQuestions] = useState<string[]>(['']);
   const [password, setPassword] = useState('');
   const [hasPassword, setHasPassword] = useState(false);
-  const [maxPlayers, setMaxPlayers] = useState(10);
-  const [minPlayers, setMinPlayers] = useState(2);
+  const [playerCount, setPlayerCount] = useState(5);
   const [loading, setLoading] = useState(false);
+  const [anoQuestions, setAnoQuestions] = useState<string[]>([]);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+
+  // Загрузка вопросов ANO из базы данных
+  useEffect(() => {
+    const loadAnoQuestions = async () => {
+      setIsLoadingQuestions(true);
+      try {
+        const { data, error } = await supabase
+          .from('ano_questions')
+          .select('question_text')
+          .order('id', { ascending: true });
+
+        if (error) throw error;
+        setAnoQuestions(data.map(q => q.question_text));
+      } catch (error) {
+        console.error('Ошибка загрузки вопросов ANO:', error);
+      } finally {
+        setIsLoadingQuestions(false);
+      }
+    };
+
+    loadAnoQuestions();
+  }, []);
 
   const addQuestion = () => {
     setQuestions([...questions, '']);
@@ -34,256 +55,280 @@ export const CreateChat: React.FC<CreateChatProps> = ({ onBack, onSuccess }) => 
     setQuestions(newQuestions);
   };
 
+  const getRandomAnoQuestions = (): string[] => {
+    if (anoQuestions.length === 0) return [];
+    const shuffled = [...anoQuestions].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, 5);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatName.trim()) return;
+    if (!chatName.trim()) return alert('Введите название комнаты');
+    if (!user) return alert('Требуется авторизация');
 
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Пользователь не авторизован');
-
-      const databaseQuestions = [
-        "Какая самая странная еда, которую ты когда-либо пробовал?",
-        "Если бы ты мог иметь любую суперсилу, какую бы выбрал?",
-        "Какой самый смешной случай произошел с тобой на публике?",
-        "Что бы ты делал, если бы выиграл миллион рублей?",
-        "Какое самое страшное место ты когда-либо посещал?"
-      ];
-
-      const finalQuestions = mode === 'database' 
-        ? databaseQuestions 
-        : questions.filter(q => q.trim() !== '');
-
-      if (mode === 'custom' && finalQuestions.length === 0) {
-        alert('Добавьте хотя бы один вопрос!');
-        setLoading(false);
-        return;
+      let finalQuestions: string[];
+      
+      if (mode === 'ano') {
+        finalQuestions = getRandomAnoQuestions();
+        if (finalQuestions.length === 0) {
+          throw new Error('Не удалось загрузить вопросы ANO');
+        }
+      } else {
+        finalQuestions = questions.filter(q => q.trim() !== '');
+        if (finalQuestions.length === 0) {
+          throw new Error('Добавьте хотя бы один вопрос');
+        }
       }
 
-      const { data: chat, error } = await supabase
+      const { data: chat, error: chatError } = await supabase
         .from('chats')
         .insert({
           name: chatName.trim(),
           mode,
-          questions: finalQuestions,
           password: hasPassword ? password : null,
-          max_players: maxPlayers,
-          min_players: minPlayers,
-          created_by: user.id
+          max_players: playerCount,
+          created_by: user.id,
+          status: 'waiting'
         })
         .select()
         .single();
 
-      if (error) throw error;
+      if (chatError) throw chatError;
 
-      // Автоматически присоединить создателя к комнате
-      await supabase
+      const questionsToInsert = finalQuestions.map((question, index) => ({
+        chat_id: chat.id,
+        question_text: question,
+        order: index + 1,
+        is_ano: mode === 'ano'
+      }));
+
+      const { error: questionsError } = await supabase
+        .from('questions')
+        .insert(questionsToInsert);
+
+      if (questionsError) throw questionsError;
+
+      const { error: playerError } = await supabase
         .from('chat_players')
         .insert({
           chat_id: chat.id,
-          user_id: user.id
+          user_id: user.id,
+          is_owner: true
         });
 
-      onSuccess();
+      if (playerError) throw playerError;
+
+      navigate(`/waiting-room/${chat.id}`);
     } catch (error: any) {
-      console.error('Error creating chat:', error);
-      alert('Ошибка при создании комнаты');
+      console.error('Ошибка создания комнаты:', error);
+      alert(`Ошибка: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="h-screen flex flex-col p-4 overflow-hidden">
-      <div className="flex items-center gap-4 mb-6">
+    <div className="h-screen flex flex-col bg-white overflow-hidden">
+      {/* Шапка */}
+      <header className="w-full py-4 px-4 flex justify-between items-center bg-white z-20 shadow-sm sticky top-0">
         <button
-          onClick={onBack}
-          className="p-3 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition-all"
+          onClick={() => navigate(-1)}
+          className="p-2 text-[#0092FF]/80 hover:text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg transition-all group"
         >
-          <ArrowLeft className="w-6 h-6" />
+          <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
         </button>
-        <h1 className="text-2xl font-bold text-white">Создать комнату</h1>
-      </div>
+        <h1 className="text-2xl font-bold text-[#0092FF]">Создать комнату</h1>
+        <div className="w-10"></div>
+      </header>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Chat Name */}
-          <div className="glass-card rounded-2xl p-6">
-            <label className="block text-sm font-medium text-white/90 mb-3">
-              Название комнаты
-            </label>
-            <input
-              type="text"
-              value={chatName}
-              onChange={(e) => setChatName(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
-              placeholder="Введите название"
-              required
-            />
-          </div>
-
-          {/* Player Settings */}
-          <div className="glass-card rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              Настройки игроков
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm text-white/80 mb-2">Минимум</label>
-                <input
-                  type="number"
-                  value={minPlayers}
-                  onChange={(e) => setMinPlayers(Math.max(2, parseInt(e.target.value) || 2))}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  min="2"
-                  max="20"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-white/80 mb-2">Максимум</label>
-                <input
-                  type="number"
-                  value={maxPlayers}
-                  onChange={(e) => setMaxPlayers(Math.max(minPlayers, parseInt(e.target.value) || 10))}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  min={minPlayers}
-                  max="20"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Password */}
-          <div className="glass-card rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Lock className="w-5 h-5" />
-                Пароль
-              </h3>
-              <button
-                type="button"
-                onClick={() => setHasPassword(!hasPassword)}
-                className={`px-4 py-2 rounded-lg transition-all ${
-                  hasPassword 
-                    ? 'bg-white/20 text-white' 
-                    : 'bg-white/10 text-white/60'
-                }`}
-              >
-                {hasPassword ? 'Включен' : 'Выключен'}
-              </button>
-            </div>
-            {hasPassword && (
+      {/* Основной контент с прокруткой */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <div className="max-w-md mx-auto">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Название комнаты */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Название комнаты
+              </label>
               <input
                 type="text"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
-                placeholder="Введите пароль"
+                value={chatName}
+                onChange={(e) => setChatName(e.target.value)}
+                className="w-full px-4 py-3 bg-white border border-[#0092FF]/30 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
+                placeholder="Придумайте название"
+                required
               />
-            )}
-          </div>
-
-          {/* Mode Selection */}
-          <div className="glass-card rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Режим игры</h3>
-            <div className="grid gap-3">
-              <button
-                type="button"
-                onClick={() => setMode('custom')}
-                className={`p-4 rounded-xl border-2 transition-all ${
-                  mode === 'custom'
-                    ? 'border-white/50 bg-white/20 text-white'
-                    : 'border-white/20 bg-white/5 text-white/70 hover:border-white/30'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Gamepad2 className="w-6 h-6" />
-                  <div className="text-left">
-                    <div className="font-medium">Свои вопросы</div>
-                    <div className="text-sm opacity-75">Создайте вопросы сами</div>
-                  </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMode('database')}
-                className={`p-4 rounded-xl border-2 transition-all ${
-                  mode === 'database'
-                    ? 'border-white/50 bg-white/20 text-white'
-                    : 'border-white/20 bg-white/5 text-white/70 hover:border-white/30'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Database className="w-6 h-6" />
-                  <div className="text-left">
-                    <div className="font-medium">Из базы данных</div>
-                    <div className="text-sm opacity-75">5 случайных вопросов</div>
-                  </div>
-                </div>
-              </button>
             </div>
-          </div>
 
-          {/* Custom Questions */}
-          {mode === 'custom' && (
-            <div className="glass-card rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-white">Ваши вопросы</h3>
+            {/* Количество игроков */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Users className="w-5 h-5 text-[#0092FF]" />
+                Количество игроков
+              </h3>
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={addQuestion}
-                  className="glass-button text-white p-2 rounded-lg hover:shadow-lg transition-all"
+                  onClick={() => setPlayerCount(Math.max(2, playerCount - 1))}
+                  className="p-2 bg-[#0092FF]/10 text-[#0092FF]/80 hover:text-[#0092FF] rounded-lg transition-all"
+                  disabled={playerCount <= 2}
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <div className="flex-1 text-center">
+                  <span className="text-2xl font-bold text-[#0092FF]">{playerCount}</span>
+                  <span className="text-sm text-gray-500 ml-2">игроков</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPlayerCount(Math.min(20, playerCount + 1))}
+                  className="p-2 bg-[#0092FF]/10 text-[#0092FF]/80 hover:text-[#0092FF] rounded-lg transition-all"
+                  disabled={playerCount >= 20}
                 >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
+            </div>
 
-              <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar">
-                {questions.map((question, index) => (
-                  <div key={index} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={question}
-                      onChange={(e) => updateQuestion(index, e.target.value)}
-                      className="flex-1 px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
-                      placeholder={`Вопрос ${index + 1}`}
-                    />
-                    {questions.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeQuestion(index)}
-                        className="p-3 text-white/60 hover:text-red-300 hover:bg-white/10 rounded-xl transition-all"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                    )}
+            {/* Пароль */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Lock className="w-5 h-5 text-[#0092FF]" />
+                  Пароль
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setHasPassword(!hasPassword)}
+                  className={`px-4 py-2 rounded-lg transition-all ${
+                    hasPassword 
+                      ? 'bg-[#0092FF]/20 text-[#0092FF]' 
+                      : 'bg-[#0092FF]/10 text-[#0092FF]/60'
+                  }`}
+                >
+                  {hasPassword ? 'Включен' : 'Выключен'}
+                </button>
+              </div>
+              {hasPassword && (
+                <input
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-[#0092FF]/30 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
+                  placeholder="Придумайте пароль"
+                />
+              )}
+            </div>
+
+            {/* Режим игры */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3">Режим игры</h3>
+              <div className="grid gap-3">
+                <button
+                  type="button"
+                  onClick={() => setMode('custom')}
+                  className={`p-4 rounded-lg border-2 transition-all ${
+                    mode === 'custom'
+                      ? 'border-[#0092FF]/50 bg-[#0092FF]/10 text-[#0092FF]'
+                      : 'border-[#0092FF]/20 bg-white text-gray-700 hover:border-[#0092FF]/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Gamepad2 className="w-6 h-6" />
+                    <div className="text-left">
+                      <div className="font-medium">Свои вопросы</div>
+                      <div className="text-sm text-gray-500">Создайте вопросы сами</div>
+                    </div>
                   </div>
-                ))}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMode('ano')}
+                  className={`p-4 rounded-lg border-2 transition-all ${
+                    mode === 'ano'
+                      ? 'border-[#0092FF]/50 bg-[#0092FF]/10 text-[#0092FF]'
+                      : 'border-[#0092FF]/20 bg-white text-gray-700 hover:border-[#0092FF]/30'
+                  }`}
+                  disabled={isLoadingQuestions}
+                >
+                  <div className="flex items-center gap-3">
+                    <Database className="w-6 h-6" />
+                    <div className="text-left">
+                      <div className="font-medium">Вопросы от ANO</div>
+                      <div className="text-sm text-gray-500">
+                        {isLoadingQuestions 
+                          ? 'Загрузка вопросов...' 
+                          : `Доступно ${anoQuestions.length} вопросов`}
+                      </div>
+                    </div>
+                  </div>
+                </button>
               </div>
             </div>
-          )}
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full glass-button text-white py-4 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all disabled:opacity-50"
-          >
-            {loading ? (
-              <div className="flex items-center justify-center gap-2">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                Создание...
+            {/* Пользовательские вопросы */}
+            {mode === 'custom' && (
+              <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold text-gray-900">Ваши вопросы</h3>
+                  <button
+                    type="button"
+                    onClick={addQuestion}
+                    className="p-2 bg-[#0092FF]/10 text-[#0092FF] rounded-lg hover:bg-[#0092FF]/20 transition-all"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3 max-h-[160px] overflow-y-auto">
+                  {questions.map((question, index) => (
+                    <div key={index} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={question}
+                        onChange={(e) => updateQuestion(index, e.target.value)}
+                        className="flex-1 px-4 py-3 bg-white border border-[#0092FF]/30 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
+                        placeholder={`Вопрос ${index + 1}`}
+                      />
+                      {questions.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeQuestion(index)}
+                          className="p-3 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ) : (
-              'Создать комнату'
             )}
-          </button>
-        </form>
+
+            {/* Кнопка создания */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-[#0092FF] text-white py-4 px-6 rounded-xl font-medium text-lg hover:bg-[#007acc] hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center mb-4"
+            >
+              {loading ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  Создание...
+                </>
+              ) : (
+                'Создать комнату'
+              )}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
 };
+
+export default CreateChat;

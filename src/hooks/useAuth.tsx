@@ -1,43 +1,29 @@
-
 import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-
-interface Profile {
-  id: string;
-  username: string;
-  password: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
 
 export const useAuth = () => {
-  const [user, setUser] = useState<Profile | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Проверяем сохраненную сессию при загрузке
   useEffect(() => {
-    // Проверяем localStorage на наличие сохраненного пользователя
-    const savedUser = localStorage.getItem('currentUser');
+    const savedUser = localStorage.getItem('supabase.auth.user');
     if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        setUser(parsedUser);
-      } catch (error) {
-        console.error('Error parsing saved user:', error);
-        localStorage.removeItem('currentUser');
-      }
+      setUser(JSON.parse(savedUser));
     }
     setLoading(false);
   }, []);
 
+  const signIn = (userData: any) => {
+    setUser(userData);
+    // Сохраняем пользователя в localStorage
+    localStorage.setItem('supabase.auth.user', JSON.stringify(userData));
+  };
+
   const signOut = () => {
-    localStorage.removeItem('currentUser');
+    localStorage.removeItem('supabase.auth.user');
     setUser(null);
+    setLoading(false);
   };
 
-  const signIn = (profile: Profile) => {
-    setUser(profile);
-    localStorage.setItem('currentUser', JSON.stringify(profile));
-  };
-
-  return { user, loading, signOut, signIn };
+  return { user, loading, signIn, signOut };
 };

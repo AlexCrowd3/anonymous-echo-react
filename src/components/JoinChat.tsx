@@ -243,3 +243,5 @@ export const JoinChat: React.FC<JoinChatProps> = ({ onBack, onJoin }) => {
     </div>
   );
 };
+
+export default JoinChat

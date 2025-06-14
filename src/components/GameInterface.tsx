@@ -383,3 +383,5 @@ export const GameInterface: React.FC<GameInterfaceProps> = ({
     </div>
   );
 };
+
+export default GameInterface

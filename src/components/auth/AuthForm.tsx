@@ -21,73 +21,45 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
     setLoading(true);
     setError('');
 
-    console.log('Starting auth process:', { isLogin, username });
-
     try {
       if (isLogin) {
-        // Логин через профили
+        // Логин
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('*')
           .eq('username', username)
           .maybeSingle();
 
-        if (profileError) {
-          console.error('Profile check error:', profileError);
-          throw new Error('Ошибка проверки пользователя');
-        }
+        if (profileError) throw new Error('Ошибка проверки пользователя');
+        if (!profile) throw new Error('Пользователь не найден');
+        if (profile.password !== password) throw new Error('Неверный пароль');
 
-        if (!profile) {
-          throw new Error('Пользователь не найден');
-        }
-
-        // Простая проверка пароля
-        if (profile.password !== password) {
-          throw new Error('Неверный пароль');
-        }
-
-        console.log('Login successful');
-        signIn(profile);
+        await signIn(profile);
         onSuccess();
       } else {
-        // Регистрация через профили
-        const { data: existingProfile, error: checkError } = await supabase
+        // Регистрация
+        if (password.length < 6) throw new Error('Пароль должен быть не менее 6 символов');
+        
+        const { data: existingProfile } = await supabase
           .from('profiles')
           .select('username')
           .eq('username', username)
           .maybeSingle();
 
-        if (checkError) {
-          console.error('Profile check error:', checkError);
-          throw new Error('Ошибка проверки пользователя');
-        }
+        if (existingProfile) throw new Error('Пользователь с таким именем уже существует');
 
-        if (existingProfile) {
-          throw new Error('Пользователь с таким именем уже существует');
-        }
-
-        if (password.length < 6) {
-          throw new Error('Пароль должен быть не менее 6 символов');
-        }
-
-        // Создаем новый профиль с уникальным ID
         const { data: newProfile, error: createError } = await supabase
           .from('profiles')
           .insert({
-            id: crypto.randomUUID(),
             username: username,
             password: password,
-            created_at: new Date().toISOString()
+            n_coin: 50  // Начальный баланс
           })
           .select()
           .single();
 
-        if (createError) {
-          console.error('Registration error:', createError);
-          throw new Error('Ошибка регистрации: ' + createError.message);
-        }
+        if (createError) throw new Error('Ошибка регистрации: ' + createError.message);
 
-        console.log('Registration successful:', newProfile);
         signIn(newProfile);
         onSuccess();
       }
@@ -100,24 +72,24 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden bg-slate-900">
-      <div className="glass-card rounded-3xl p-8 w-full max-w-sm shadow-2xl">
+    <div className="h-screen flex flex-col justify-center items-center p-4 overflow-hidden bg-white">
+      <div className="bg-white border-2 border-[#0092FF]/20 rounded-3xl p-8 w-full max-w-sm shadow-lg">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-white/20 rounded-full mb-6">
-            <User className="w-10 h-10 text-white" />
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-[#0092FF]/10 rounded-full mb-6">
+            <User className="w-10 h-10 text-[#0092FF]" />
           </div>
-          <h1 className="text-4xl font-bold text-white mb-2">ANO</h1>
-          <p className="text-white/80 text-lg">Анонимные чаты</p>
+          <h1 className="text-4xl font-bold text-[#0092FF] mb-2">ANO</h1>
+          <p className="text-gray-600 text-lg">Анонимные чаты</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="relative">
-            <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
+            <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-[#0092FF]/80" />
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
+              className="w-full pl-12 pr-4 py-3 bg-white border-2 border-[#0092FF]/30 rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
               placeholder="Имя пользователя"
               required
               minLength={3}
@@ -125,12 +97,12 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           </div>
 
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
+            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-[#0092FF]/80" />
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full pl-12 pr-12 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
+              className="w-full pl-12 pr-12 py-3 bg-white border-2 border-[#0092FF]/30 rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
               placeholder="Пароль"
               required
               minLength={6}
@@ -138,14 +110,14 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/60 hover:text-white"
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-[#0092FF]/80 hover:text-[#0092FF]"
             >
               {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
           </div>
 
           {error && (
-            <div className="text-red-300 text-sm text-center bg-red-500/20 p-2 rounded-lg">
+            <div className="text-red-500 text-sm text-center bg-red-100 p-2 rounded-lg">
               {error}
             </div>
           )}
@@ -153,7 +125,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full glass-button text-white py-3 px-6 rounded-2xl font-medium text-lg hover:shadow-lg transition-all disabled:opacity-50"
+            className="w-full bg-[#0092FF] text-white py-3 px-6 rounded-2xl font-medium text-lg hover:bg-[#007acc] hover:shadow-lg transition-all disabled:opacity-50"
           >
             {loading ? (
               <div className="flex items-center justify-center gap-2">
@@ -168,17 +140,17 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           <button
             type="button"
             onClick={() => setIsLogin(!isLogin)}
-            className="w-full text-white/80 text-sm hover:text-white transition-all"
+            className="w-full text-[#0092FF]/80 text-sm hover:text-[#0092FF] transition-all"
           >
             {isLogin ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти'}
           </button>
         </form>
 
         <div className="mt-8 text-center">
-          <div className="inline-flex items-center justify-center w-8 h-8 bg-white/20 rounded-full mb-4">
-            <span className="text-white text-sm">i</span>
+          <div className="inline-flex items-center justify-center w-8 h-8 bg-[#0092FF]/10 rounded-full mb-4">
+            <span className="text-[#0092FF] text-sm">i</span>
           </div>
-          <p className="text-white/70 text-sm leading-relaxed">
+          <p className="text-gray-600 text-sm leading-relaxed">
             В этой игре вы сможете узнать что думают о вас ваши друзья, и анонимно высказать мнение о других
           </p>
         </div>

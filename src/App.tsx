@@ -1,27 +1,37 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import Index from '@/pages/Index';
+import NotFound from '@/pages/NotFound';
+import { AuthForm } from '@/components/auth/AuthForm';
+import GameMenu from '@/components/GameMenu';
+import CreateChat from '@/components/CreateChat';
+import JoinChat from '@/components/JoinChat';
+import WaitingRoom from '@/components/waitUsers';
+import GameInterface from '@/components/GameInterface';
+import { useAuth } from '@/hooks/useAuth';
 
-const queryClient = new QueryClient();
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Index />} />
+        <Route path="/login" element={<LoginRedirector />} />
+        <Route element={<ProtectedRoute />}>
+          <Route path="/menu" element={<GameMenu />} />
+          <Route path="/create-chat" element={<CreateChat />} />
+          <Route path="/join-chat" element={<JoinChat />} />
+          <Route path="/waiting-room/:id" element={<WaitingRoom />} />
+          <Route path="/playing/:chatId" element={<GameInterface />} />
+        </Route>
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const LoginRedirector = () => {
+  const { user } = useAuth();
+  return user ? <Navigate to="/menu" replace /> : <Navigate to="/" replace />;
+};
 
 export default App;
