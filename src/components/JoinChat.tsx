@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 export const JoinChat: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, session } = useAuth(); // Добавлена проверка сессии
   const { chats, loading, refetch } = useChats();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChat, setSelectedChat] = useState<any>(null);
@@ -18,7 +18,6 @@ export const JoinChat: React.FC = () => {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
 
-  // Обновляем список чатов при изменении location (навигации)
   useEffect(() => {
     refetch();
   }, [location, refetch]);
@@ -28,7 +27,7 @@ export const JoinChat: React.FC = () => {
   );
 
   const handleBack = () => {
-    navigate(-1); // Возврат на предыдущую страницу
+    navigate(-1);
   };
 
   const handleJoinClick = async (chat: any) => {
@@ -44,6 +43,11 @@ export const JoinChat: React.FC = () => {
     setJoining(true);
 
     try {
+      // Проверка авторизации через сессию
+      if (!session) {
+        throw new Error('Сессия не найдена. Пожалуйста, войдите снова.');
+      }
+
       // Проверка пароля
       if (chat.password && chat.password !== enteredPassword) {
         throw new Error('Неверный пароль!');
@@ -54,20 +58,15 @@ export const JoinChat: React.FC = () => {
         throw new Error('Комната переполнена!');
       }
 
-      // Получаем текущего пользователя
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) throw new Error('Пользователь не авторизован');
-
-      // Присоединяемся к чату
+      // Присоединяемся к чату с использованием текущей сессии
       const { error: joinError } = await supabase
         .from('chat_players')
         .insert({
           chat_id: chat.id,
-          user_id: user.id
+          user_id: session.user.id // Используем ID из сессии
         });
 
       if (joinError) {
-        // Если ошибка не о дубликате ключа
         if (!joinError.message.includes('duplicate key')) {
           throw joinError;
         }
@@ -80,7 +79,6 @@ export const JoinChat: React.FC = () => {
         .update({ player_count: chat.player_count + 1 })
         .eq('id', chat.id);
 
-      // Переходим в комнату ожидания
       navigate(`/waiting-room/${chat.id}`);
 
     } catch (err: any) {
@@ -99,7 +97,6 @@ export const JoinChat: React.FC = () => {
     }
   };
 
-  // Получаем реальное количество вопросов для чата
   const getQuestionCount = async (chatId: string) => {
     const { count } = await supabase
       .from('questions')
@@ -118,7 +115,6 @@ export const JoinChat: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-white overflow-hidden relative">
-      {/* Шапка */}
       <header className="w-full py-4 px-4 flex justify-between items-center bg-white z-20 shadow-sm relative">
         <button
           onClick={handleBack}
@@ -136,7 +132,6 @@ export const JoinChat: React.FC = () => {
         </div>
       </header>
 
-      {/* Поиск */}
       <div className="px-4 pt-2 pb-4 z-20">
         <SearchBar
           value={searchQuery}
@@ -145,7 +140,6 @@ export const JoinChat: React.FC = () => {
         />
       </div>
 
-      {/* Сообщение об ошибке */}
       {error && (
         <div className="px-4 mb-4">
           <div className="bg-red-100 text-red-700 p-3 rounded-lg">
@@ -154,7 +148,6 @@ export const JoinChat: React.FC = () => {
         </div>
       )}
 
-      {/* Список комнат */}
       <div className="flex-1 overflow-y-auto px-4 pb-24 z-10">
         {filteredChats.length === 0 ? (
           <div className="bg-white/90 rounded-2xl p-8 text-center border border-[#0092FF]/20 shadow-sm">
@@ -181,7 +174,6 @@ export const JoinChat: React.FC = () => {
         )}
       </div>
 
-      {/* Модальное окно пароля */}
       {selectedChat && (
         <PasswordModal
           onClose={() => {
@@ -199,12 +191,10 @@ export const JoinChat: React.FC = () => {
   );
 };
 
-// Компонент карточки чата
 const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
   const [questionCount, setQuestionCount] = useState(chat.questions?.length || 0);
 
   useEffect(() => {
-    // Загружаем актуальное количество вопросов
     const loadQuestionCount = async () => {
       const count = await getQuestionCount(chat.id);
       setQuestionCount(count);
@@ -288,7 +278,6 @@ const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
   );
 };
 
-// Компонент модального окна для пароля
 const PasswordModal = ({ onClose, onSubmit, password, setPassword, joining }: any) => {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
