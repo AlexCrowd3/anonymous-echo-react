@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 export const JoinChat: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, session } = useAuth(); // Добавлена проверка сессии
+  const { user, session, refreshSession } = useAuth(); // Добавлен refreshSession
   const { chats, loading, refetch } = useChats();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChat, setSelectedChat] = useState<any>(null);
@@ -18,9 +18,23 @@ export const JoinChat: React.FC = () => {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
 
+  // Проверяем и обновляем сессию при загрузке
   useEffect(() => {
+    const checkSession = async () => {
+      try {
+        await refreshSession(); // Принудительно обновляем сессию
+        if (!session) {
+          navigate('/login'); // Перенаправляем если нет сессии
+        }
+      } catch (err) {
+        console.error('Ошибка проверки сессии:', err);
+        navigate('/login');
+      }
+    };
+    
+    checkSession();
     refetch();
-  }, [location, refetch]);
+  }, [location, refetch, navigate, refreshSession, session]);
 
   const filteredChats = chats.filter(chat =>
     chat.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -43,9 +57,11 @@ export const JoinChat: React.FC = () => {
     setJoining(true);
 
     try {
-      // Проверка авторизации через сессию
-      if (!session) {
-        throw new Error('Сессия не найдена. Пожалуйста, войдите снова.');
+      // Дополнительная проверка сессии
+      const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !currentSession) {
+        throw new Error('Сессия устарела. Пожалуйста, войдите снова.');
       }
 
       // Проверка пароля
@@ -63,7 +79,7 @@ export const JoinChat: React.FC = () => {
         .from('chat_players')
         .insert({
           chat_id: chat.id,
-          user_id: session.user.id // Используем ID из сессии
+          user_id: currentSession.user.id
         });
 
       if (joinError) {
@@ -84,6 +100,13 @@ export const JoinChat: React.FC = () => {
     } catch (err: any) {
       console.error('Ошибка при присоединении:', err);
       setError(err.message || 'Ошибка при подключении к комнате');
+      
+      // Если проблема с сессией - предлагаем перелогиниться
+      if (err.message.includes('Сессия')) {
+        setTimeout(() => {
+          navigate('/login');
+        }, 2000);
+      }
     } finally {
       setJoining(false);
     }
@@ -105,7 +128,7 @@ export const JoinChat: React.FC = () => {
     return count || 0;
   };
 
-  if (loading) {
+  if (loading || !session) {
     return (
       <div className="min-h-screen flex justify-center items-center bg-white">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#0092FF]"></div>
@@ -144,6 +167,14 @@ export const JoinChat: React.FC = () => {
         <div className="px-4 mb-4">
           <div className="bg-red-100 text-red-700 p-3 rounded-lg">
             {error}
+            {error.includes('Сессия') && (
+              <button 
+                onClick={() => navigate('/login')}
+                className="mt-2 text-blue-600 underline"
+              >
+                Войти снова
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -190,6 +221,8 @@ export const JoinChat: React.FC = () => {
     </div>
   );
 };
+
+// Компоненты ChatCard и PasswordModal остаются без изменений
 
 const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
   const [questionCount, setQuestionCount] = useState(chat.questions?.length || 0);
