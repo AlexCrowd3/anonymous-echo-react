@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 export const JoinChat: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, session, refreshSession } = useAuth(); // Добавлен refreshSession
+  const { user, session, refreshSession } = useAuth();
   const { chats, loading, refetch } = useChats();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChat, setSelectedChat] = useState<any>(null);
@@ -18,14 +18,22 @@ export const JoinChat: React.FC = () => {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
 
-  // Проверяем и обновляем сессию при загрузке
   useEffect(() => {
     const checkSession = async () => {
       try {
-        await refreshSession(); // Принудительно обновляем сессию
-        if (!session) {
-          navigate('/login'); // Перенаправляем если нет сессии
+        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+        
+        if (error || !currentSession) {
+          console.error('Нет активной сессии:', error);
+          navigate('/login');
+          return;
         }
+        
+        if (!user) {
+          await refreshSession();
+        }
+        
+        refetch();
       } catch (err) {
         console.error('Ошибка проверки сессии:', err);
         navigate('/login');
@@ -33,8 +41,7 @@ export const JoinChat: React.FC = () => {
     };
     
     checkSession();
-    refetch();
-  }, [location, refetch, navigate, refreshSession, session]);
+  }, [location, refetch, navigate, refreshSession, user]);
 
   const filteredChats = chats.filter(chat =>
     chat.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -57,12 +64,19 @@ export const JoinChat: React.FC = () => {
     setJoining(true);
 
     try {
-      // Дополнительная проверка сессии
+      // Получаем текущую сессию
       const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !currentSession) {
-        throw new Error('Сессия устарела. Пожалуйста, войдите снова.');
+
+      if (sessionError) {
+        console.error('Ошибка получения сессии:', sessionError);
+        throw new Error('Ошибка авторизации. Пожалуйста, войдите снова.');
       }
+
+      if (!currentSession?.user) {
+        throw new Error('Сессия недействительна. Пожалуйста, войдите снова.');
+      }
+
+      const currentUser = currentSession.user;
 
       // Проверка пароля
       if (chat.password && chat.password !== enteredPassword) {
@@ -74,19 +88,21 @@ export const JoinChat: React.FC = () => {
         throw new Error('Комната переполнена!');
       }
 
-      // Присоединяемся к чату с использованием текущей сессии
+      // Присоединяемся к чату
       const { error: joinError } = await supabase
         .from('chat_players')
         .insert({
           chat_id: chat.id,
-          user_id: currentSession.user.id
+          user_id: currentUser.id
         });
 
       if (joinError) {
-        if (!joinError.message.includes('duplicate key')) {
-          throw joinError;
+        if (joinError.message.includes('duplicate key')) {
+          // Если пользователь уже в комнате - перенаправляем
+          navigate(`/waiting-room/${chat.id}`);
+          return;
         }
-        // Если пользователь уже в комнате - просто переходим
+        throw joinError;
       }
 
       // Обновляем количество игроков
@@ -99,13 +115,16 @@ export const JoinChat: React.FC = () => {
 
     } catch (err: any) {
       console.error('Ошибка при присоединении:', err);
-      setError(err.message || 'Ошибка при подключении к комнате');
       
-      // Если проблема с сессией - предлагаем перелогиниться
-      if (err.message.includes('Сессия')) {
-        setTimeout(() => {
-          navigate('/login');
-        }, 2000);
+      // Определяем тип ошибки
+      if (err.message.includes('invalid JWT') || err.message.includes('Сессия')) {
+        setError('Сессия устарела. Пожалуйста, войдите снова.');
+        setTimeout(() => navigate('/login'), 1500);
+      } else if (err.message.includes('duplicate key')) {
+        setError('Вы уже в этой комнате. Перенаправляем...');
+        setTimeout(() => navigate(`/waiting-room/${selectedChat.id}`), 1500);
+      } else {
+        setError(err.message || 'Ошибка при подключении к комнате');
       }
     } finally {
       setJoining(false);
@@ -221,8 +240,6 @@ export const JoinChat: React.FC = () => {
     </div>
   );
 };
-
-// Компоненты ChatCard и PasswordModal остаются без изменений
 
 const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
   const [questionCount, setQuestionCount] = useState(chat.questions?.length || 0);
