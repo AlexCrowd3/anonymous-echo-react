@@ -17,31 +17,31 @@ export const JoinChat: React.FC = () => {
   const [password, setPassword] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
+  const [sessionChecked, setSessionChecked] = useState(false);
 
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+        await refreshSession();
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
         
-        if (error || !currentSession) {
-          console.error('Нет активной сессии:', error);
+        if (!currentSession) {
           navigate('/login');
           return;
         }
         
-        if (!user) {
-          await refreshSession();
-        }
-        
-        refetch();
+        await refetch();
+        setSessionChecked(true);
       } catch (err) {
-        console.error('Ошибка проверки сессии:', err);
+        console.error('Session check error:', err);
         navigate('/login');
       }
     };
     
-    checkSession();
-  }, [location, refetch, navigate, refreshSession, user]);
+    if (!sessionChecked) {
+      checkSession();
+    }
+  }, [navigate, refreshSession, refetch, sessionChecked]);
 
   const filteredChats = chats.filter(chat =>
     chat.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -64,67 +64,38 @@ export const JoinChat: React.FC = () => {
     setJoining(true);
 
     try {
-      // Получаем текущую сессию
-      const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+      // 1. Проверяем авторизацию
+      const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+      if (userError || !currentUser) throw new Error('Не авторизован');
 
-      if (sessionError) {
-        console.error('Ошибка получения сессии:', sessionError);
-        throw new Error('Ошибка авторизации. Пожалуйста, войдите снова.');
-      }
-
-      if (!currentSession?.user) {
-        throw new Error('Сессия недействительна. Пожалуйста, войдите снова.');
-      }
-
-      const currentUser = currentSession.user;
-
-      // Проверка пароля
+      // 2. Проверяем пароль если требуется
       if (chat.password && chat.password !== enteredPassword) {
-        throw new Error('Неверный пароль!');
+        throw new Error('Неверный пароль');
       }
 
-      // Проверка количества игроков
-      if (chat.player_count >= chat.max_players) {
-        throw new Error('Комната переполнена!');
-      }
-
-      // Присоединяемся к чату
-      const { error: joinError } = await supabase
-        .from('chat_players')
-        .insert({
-          chat_id: chat.id,
-          user_id: currentUser.id
-        });
+      // 3. Используем функцию Supabase для безопасного присоединения
+      const { error: joinError } = await supabase.rpc('join_chat_transaction', {
+        p_chat_id: chat.id,
+        p_user_id: currentUser.id
+      });
 
       if (joinError) {
-        if (joinError.message.includes('duplicate key')) {
-          // Если пользователь уже в комнате - перенаправляем
-          navigate(`/waiting-room/${chat.id}`);
-          return;
+        if (joinError.code === 'P0001') {
+          // Ошибка из нашей функции (комната заполнена или не существует)
+          throw new Error(joinError.message);
         }
         throw joinError;
       }
 
-      // Обновляем количество игроков
-      await supabase
-        .from('chats')
-        .update({ player_count: chat.player_count + 1 })
-        .eq('id', chat.id);
-
+      // Успешное присоединение
       navigate(`/waiting-room/${chat.id}`);
 
     } catch (err: any) {
-      console.error('Ошибка при присоединении:', err);
+      console.error('Join error:', err);
+      setError(err.message || 'Ошибка при подключении');
       
-      // Определяем тип ошибки
-      if (err.message.includes('invalid JWT') || err.message.includes('Сессия')) {
-        setError('Сессия устарела. Пожалуйста, войдите снова.');
+      if (err.message.includes('Не авторизован')) {
         setTimeout(() => navigate('/login'), 1500);
-      } else if (err.message.includes('duplicate key')) {
-        setError('Вы уже в этой комнате. Перенаправляем...');
-        setTimeout(() => navigate(`/waiting-room/${selectedChat.id}`), 1500);
-      } else {
-        setError(err.message || 'Ошибка при подключении к комнате');
       }
     } finally {
       setJoining(false);
@@ -134,8 +105,6 @@ export const JoinChat: React.FC = () => {
   const handlePasswordSubmit = async () => {
     if (selectedChat) {
       await joinChat(selectedChat, password);
-      setSelectedChat(null);
-      setPassword('');
     }
   };
 
@@ -147,7 +116,7 @@ export const JoinChat: React.FC = () => {
     return count || 0;
   };
 
-  if (loading || !session) {
+  if (loading || !sessionChecked) {
     return (
       <div className="min-h-screen flex justify-center items-center bg-white">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#0092FF]"></div>
@@ -186,7 +155,7 @@ export const JoinChat: React.FC = () => {
         <div className="px-4 mb-4">
           <div className="bg-red-100 text-red-700 p-3 rounded-lg">
             {error}
-            {error.includes('Сессия') && (
+            {error.includes('Не авторизован') && (
               <button 
                 onClick={() => navigate('/login')}
                 className="mt-2 text-blue-600 underline"
@@ -289,7 +258,7 @@ const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
             </div>
           )}
 
-          {chat.is_started ? (
+          {chat.status === 'in_progress' ? (
             <div className="mt-2">
               <span className="text-xs bg-green-500/10 text-green-700 px-2 py-1 rounded-full">
                 Игра началась
@@ -314,7 +283,7 @@ const ChatCard = ({ chat, onJoin, joining, getQuestionCount }: any) => {
 
         <button
           onClick={() => onJoin(chat)}
-          disabled={chat.player_count >= chat.max_players || joining}
+          disabled={chat.player_count >= chat.max_players || joining || chat.status !== 'waiting'}
           className="bg-[#0092FF] text-white px-4 py-2 rounded-lg font-medium hover:bg-[#007acc] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {joining ? (
@@ -353,7 +322,7 @@ const PasswordModal = ({ onClose, onSubmit, password, setPassword, joining }: an
           </button>
           <button
             onClick={onSubmit}
-            disabled={joining}
+            disabled={joining || !password}
             className="flex-1 bg-[#0092FF] text-white py-2 px-4 rounded-lg hover:bg-[#007acc] transition-all disabled:opacity-50"
           >
             {joining ? (
