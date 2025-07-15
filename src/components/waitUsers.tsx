@@ -44,6 +44,7 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
@@ -126,7 +127,10 @@ const WaitingRoom: React.FC = () => {
           schema: 'public',
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
-        }, fetchPlayersData);
+        }, async (payload) => {
+          // Принудительно обновляем данные игроков
+          await fetchPlayersData();
+        });
 
       // Подписка на изменения чата
       const chatChannel = supabase
@@ -156,7 +160,10 @@ const WaitingRoom: React.FC = () => {
           schema: 'public',
           table: 'questions',
           filter: `chat_id=eq.${chatId}`
-        }, fetchQuestionsData);
+        }, async () => {
+          // Принудительно обновляем вопросы
+          await fetchQuestionsData();
+        });
 
       // Сохраняем подписки
       channelsRef.current = [
@@ -286,9 +293,9 @@ const WaitingRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="h-screen flex flex-col bg-white overflow-hidden">
       {/* Анимация поиска игроков */}
-      <div className="w-full h-64 flex items-center justify-center bg-white">
+      <div className="w-full h-64 flex-shrink-0 flex items-center justify-center bg-white">
         <div className="relative">
           <div className="w-48 h-48 rounded-full border-4 border-[#0092FF] border-t-transparent animate-spin"></div>
           <Users className="absolute inset-0 m-auto w-12 h-12 text-[#0092FF]" />
@@ -314,129 +321,131 @@ const WaitingRoom: React.FC = () => {
         </div>
       )}
 
-      {/* Основной контент */}
-      <div className="flex-1 px-4 overflow-y-auto">
-        <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10">
-          <button
-            onClick={leaveRoom}
-            disabled={isLeaving}
-            className="p-2 text-[#0092FF]/80 hover:text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg transition-all group disabled:opacity-50"
-          >
-            {isLeaving ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <LogOut className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            )}
-          </button>
-          
-          <h1 className="text-xl md:text-2xl font-bold text-[#0092FF]">{chat?.name}</h1>
-          
-          <div className="w-10"></div>
-        </header>
+      {/* Основной контент с прокруткой */}
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full overflow-y-auto" ref={contentRef}>
+          <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10 px-4">
+            <button
+              onClick={leaveRoom}
+              disabled={isLeaving}
+              className="p-2 text-[#0092FF]/80 hover:text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg transition-all group disabled:opacity-50"
+            >
+              {isLeaving ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <LogOut className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+              )}
+            </button>
+            
+            <h1 className="text-xl md:text-2xl font-bold text-[#0092FF]">{chat?.name}</h1>
+            
+            <div className="w-10"></div>
+          </header>
 
-        <div className="max-w-md mx-auto mt-4 mb-24">
-          {/* Блок с информацией о комнате */}
-          <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-            <div className="flex justify-between items-center mb-4">
-              <div className="text-center">
-                <div className="text-2xl md:text-3xl font-bold text-[#0092FF]">
-                  {players.length}/{chat?.max_players || 0}
+          <div className="max-w-md mx-auto mt-4 pb-24 px-4">
+            {/* Блок с информацией о комнате */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
+              <div className="flex justify-between items-center mb-4">
+                <div className="text-center">
+                  <div className="text-2xl md:text-3xl font-bold text-[#0092FF]">
+                    {players.length}/{chat?.max_players || 0}
+                  </div>
+                  <div className="text-sm text-gray-500">Игроков</div>
                 </div>
-                <div className="text-sm text-gray-500">Игроков</div>
+                
+                {chat?.password && (
+                  <div className="text-center">
+                    <div className="text-sm text-gray-500 mb-1">Пароль</div>
+                    <div className="text-lg md:text-xl font-bold text-[#0092FF]">
+                      {chat.password}
+                    </div>
+                  </div>
+                )}
               </div>
               
-              {chat?.password && (
-                <div className="text-center">
-                  <div className="text-sm text-gray-500 mb-1">Пароль</div>
-                  <div className="text-lg md:text-xl font-bold text-[#0092FF]">
-                    {chat.password}
-                  </div>
-                </div>
-              )}
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+                <div 
+                  className="bg-[#0092FF] h-2.5 rounded-full transition-all duration-500" 
+                  style={{ 
+                    width: `${Math.min(100, (players.length / (chat?.max_players || 1)) * 100)}%` 
+                  }}
+                ></div>
+              </div>
             </div>
-            
-            <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
-              <div 
-                className="bg-[#0092FF] h-2.5 rounded-full transition-all duration-500" 
-                style={{ 
-                  width: `${Math.min(100, (players.length / (chat?.max_players || 1)) * 100)}%` 
-                }}
-              ></div>
-            </div>
-          </div>
 
-          {/* Список игроков */}
-          <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-            <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Users className="w-5 h-5 text-[#0092FF]" />
-              Участники комнаты ({players.length})
-            </h2>
-            
-            <div className="space-y-3">
-              {players.length === 0 ? (
-                <div className="text-center text-gray-500 py-4">
-                  Ожидаем игроков...
-                </div>
-              ) : (
-                players.map((player) => (
-                  <div 
-                    key={player.user_id}
-                    className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
-                      player.is_owner 
-                        ? 'bg-[#0092FF]/10 border border-[#0092FF]/20' 
-                        : 'bg-gray-50'
-                    }`}
-                  >
-                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF]">
-                      <User className="w-4 h-4 md:w-5 md:h-5" />
-                    </div>
-                    <div className="font-medium text-gray-900">
-                      {player.profiles?.username || 'Аноним'}
-                    </div>
-                    {player.is_owner && (
-                      <div className="ml-auto flex items-center gap-1 text-yellow-500">
-                        <Crown className="w-4 h-4" />
-                        <span className="text-xs">Создатель</span>
+            {/* Список игроков */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Users className="w-5 h-5 text-[#0092FF]" />
+                Участники комнаты ({players.length})
+              </h2>
+              
+              <div className="space-y-3">
+                {players.length === 0 ? (
+                  <div className="text-center text-gray-500 py-4">
+                    Ожидаем игроков...
+                  </div>
+                ) : (
+                  players.map((player) => (
+                    <div 
+                      key={player.user_id}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                        player.is_owner 
+                          ? 'bg-[#0092FF]/10 border border-[#0092FF]/20' 
+                          : 'bg-gray-50'
+                      }`}
+                    >
+                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF]">
+                        <User className="w-4 h-4 md:w-5 md:h-5" />
                       </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Список вопросов */}
-          <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-            <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-[#0092FF]" />
-              Вопросы ({questions.length})
-            </h2>
-            
-            <div className="space-y-3">
-              {questions.length === 0 ? (
-                <div className="text-center text-gray-500 py-4">
-                  Вопросы не добавлены
-                </div>
-              ) : (
-                questions.map((question, index) => (
-                  <div 
-                    key={question.id}
-                    className="flex items-start gap-3 p-3 rounded-lg bg-gray-50"
-                  >
-                    <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF] mt-1">
-                      <span className="text-sm font-bold">{index + 1}</span>
-                    </div>
-                    <div className="flex-1">
                       <div className="font-medium text-gray-900">
-                        {question.question_text}
+                        {player.profiles?.username || 'Аноним'}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {question.is_ano ? 'Из базы вопросов' : 'Пользовательский'}
+                      {player.is_owner && (
+                        <div className="ml-auto flex items-center gap-1 text-yellow-500">
+                          <Crown className="w-4 h-4" />
+                          <span className="text-xs">Создатель</span>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Список вопросов */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-[#0092FF]" />
+                Вопросы ({questions.length})
+              </h2>
+              
+              <div className="space-y-3">
+                {questions.length === 0 ? (
+                  <div className="text-center text-gray-500 py-4">
+                    Вопросы не добавлены
+                  </div>
+                ) : (
+                  questions.map((question, index) => (
+                    <div 
+                      key={question.id}
+                      className="flex items-start gap-3 p-3 rounded-lg bg-gray-50"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF] mt-1">
+                        <span className="text-sm font-bold">{index + 1}</span>
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">
+                          {question.question_text}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {question.is_ano ? 'Из базы вопросов' : 'Пользовательский'}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
