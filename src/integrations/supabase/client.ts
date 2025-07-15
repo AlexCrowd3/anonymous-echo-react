@@ -1,6 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = "https://oasqaqivfuwgourpqvhc.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hc3FhcWl2ZnV3Z291cnBxdmhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4NTAzOTgsImV4cCI6MjA2NTQyNjM5OH0._27PKLIIaH-h2Zbuna7D2EBzeEeVbyY0KjNuFk-y-os";
+const SUPABASE_URL = "https://iqzuhtxvpuxfxltiyfom.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxenVodHh2cHV4ZnhsdGl5Zm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0MTM3MjgsImV4cCI6MjA2Nzk4OTcyOH0.xOSkVkViX8jcFZJLmpTYqAGEu6x44UOX-ykhTgtSiRU";
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+});

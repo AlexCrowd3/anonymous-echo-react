@@ -83,18 +83,23 @@ const CreateChat: React.FC = () => {
         }
       }
 
-      // Создаем комнату через RPC функцию
-      const { data: chat, error: chatError } = await supabase.rpc('create_chat_with_owner', {
-        p_name: chatName.trim(),
-        p_mode: mode,
-        p_max_players: playerCount,
-        p_password: hasPassword ? password : null,
-        p_created_by: user.id
-      });
+      // Добавлено min_players со значением по умолчанию 2
+      const { data: chat, error: chatError } = await supabase
+        .from('chats')
+        .insert({
+          name: chatName.trim(),
+          mode,
+          password: hasPassword ? password : null,
+          max_players: playerCount,
+          min_players: 2, // Добавлено обязательное поле
+          created_by: user.id,
+          status: 'waiting'
+        })
+        .select()
+        .single();
 
       if (chatError) throw chatError;
 
-      // Добавляем вопросы
       const questionsToInsert = finalQuestions.map((question, index) => ({
         chat_id: chat.id,
         question_text: question,
@@ -107,6 +112,16 @@ const CreateChat: React.FC = () => {
         .insert(questionsToInsert);
 
       if (questionsError) throw questionsError;
+
+      const { error: playerError } = await supabase
+        .from('chat_players')
+        .insert({
+          chat_id: chat.id,
+          user_id: user.id,
+          is_owner: true
+        });
+
+      if (playerError) throw playerError;
 
       navigate(`/waiting-room/${chat.id}`);
     } catch (error: any) {
