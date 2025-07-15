@@ -31,120 +31,144 @@ const WaitingRoom: React.FC = () => {
       return;
     }
 
+    let playersSubscription: any;
+    let chatSubscription: any;
+    let questionsSubscription: any;
+
     const fetchData = async () => {
-      const { data: chatData, error: chatError } = await supabase
-        .from('chats')
-        .select('*')
-        .eq('id', chatId)
-        .single();
+      try {
+        setLoading(true);
+        
+        // Получаем данные чата
+        const { data: chatData, error: chatError } = await supabase
+          .from('chats')
+          .select('*')
+          .eq('id', chatId)
+          .single();
 
-      if (chatError || !chatData) {
-        console.error('Ошибка при получении комнаты:', chatError);
-        navigate('/');
-        return;
-      }
-
-      setChat(chatData);
-      await fetchPlayers();
-      await fetchQuestions();
-      setLoading(false);
-
-      if (chatData.status === 'in_progress') {
-        navigate(`/game/${chatId}`);
-      }
-    };
-
-    const fetchPlayers = async () => {
-      const { data: playersData, error: playersError } = await supabase
-        .from('chat_players')
-        .select('*, profiles(username)')
-        .eq('chat_id', chatId);
-
-      if (!playersError) {
-        setPlayers(playersData || []);
-        setIsCreator(playersData?.some(p => p.user_id === user?.id && p.is_owner) || false);
-      }
-    };
-
-    const fetchQuestions = async () => {
-      const { data: questionsData, error: questionsError } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('chat_id', chatId)
-        .order('order', { ascending: true });
-
-      if (!questionsError) {
-        setQuestions(questionsData || []);
-      }
-    };
-
-    const handlePlayersChange = async () => {
-      const { data: playersData, error: playersError } = await supabase
-        .from('chat_players')
-        .select('*, profiles(username)')
-        .eq('chat_id', chatId);
-
-      if (!playersError) {
-        setPlayers(playersData || []);
-
-        // Если вышел создатель, назначаем нового
-        if (playersData?.length > 0 && !playersData.some(p => p.is_owner)) {
-          const newOwner = playersData[0].user_id;
-          await supabase
-            .from('chat_players')
-            .update({ is_owner: true })
-            .eq('user_id', newOwner)
-            .eq('chat_id', chatId);
+        if (chatError || !chatData) {
+          console.error('Ошибка при получении комнаты:', chatError);
+          navigate('/');
+          return;
         }
+
+        setChat(chatData);
+
+        // Получаем игроков
+        const { data: playersData, error: playersError } = await supabase
+          .from('chat_players')
+          .select('*, profiles(username)')
+          .eq('chat_id', chatId);
+
+        if (!playersError) {
+          setPlayers(playersData || []);
+          setIsCreator(playersData?.some(p => p.user_id === user?.id && p.is_owner) || false);
+        }
+
+        // Получаем вопросы
+        const { data: questionsData, error: questionsError } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('chat_id', chatId)
+          .order('order', { ascending: true });
+
+        if (!questionsError) {
+          setQuestions(questionsData || []);
+        }
+
+        setLoading(false);
+
+        // Если игра уже начата - переходим
+        if (chatData.status === 'in_progress') {
+          navigate(`/game/${chatId}`);
+        }
+
+        // Подписка на изменения игроков
+        playersSubscription = supabase
+          .channel('chat_players_changes')
+          .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'chat_players',
+            filter: `chat_id=eq.${chatId}`
+          }, async (payload) => {
+            const { data: updatedPlayers } = await supabase
+              .from('chat_players')
+              .select('*, profiles(username)')
+              .eq('chat_id', chatId);
+
+            if (updatedPlayers) {
+              setPlayers(updatedPlayers);
+              setIsCreator(updatedPlayers.some(p => p.user_id === user?.id && p.is_owner));
+              
+              // Если вышел создатель, назначаем нового
+              if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
+                const newOwner = updatedPlayers[0].user_id;
+                await supabase
+                  .from('chat_players')
+                  .update({ is_owner: true })
+                  .eq('user_id', newOwner)
+                  .eq('chat_id', chatId);
+              }
+            }
+          })
+          .subscribe();
+
+        // Подписка на изменения чата
+        chatSubscription = supabase
+          .channel('chat_changes')
+          .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'chats',
+            filter: `id=eq.${chatId}`
+          }, async (payload) => {
+            if (payload.eventType === 'DELETE') {
+              displayNotification('Комната закрыта', 'info');
+              setTimeout(() => navigate('/'), 3000);
+            } else if (payload.eventType === 'UPDATE') {
+              setChat(payload.new);
+              if (payload.new.status === 'in_progress') {
+                navigate(`/game/${chatId}`);
+              }
+            }
+          })
+          .subscribe();
+
+        // Подписка на изменения вопросов
+        questionsSubscription = supabase
+          .channel('questions_changes')
+          .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'questions',
+            filter: `chat_id=eq.${chatId}`
+          }, async () => {
+            const { data: updatedQuestions } = await supabase
+              .from('questions')
+              .select('*')
+              .eq('chat_id', chatId)
+              .order('order', { ascending: true });
+            
+            if (updatedQuestions) {
+              setQuestions(updatedQuestions);
+            }
+          })
+          .subscribe();
+
+      } catch (error) {
+        console.error('Error:', error);
+        displayNotification('Ошибка загрузки данных', 'error');
+        setLoading(false);
       }
     };
-
-    const playersSubscription = supabase
-      .channel('chat_players_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'chat_players',
-        filter: `chat_id=eq.${chatId}`
-      }, handlePlayersChange)
-      .subscribe();
-
-    const chatSubscription = supabase
-      .channel('chat_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'chats',
-        filter: `id=eq.${chatId}`
-      }, async (payload) => {
-        if (payload.eventType === 'DELETE') {
-          displayNotification('Комната закрыта', 'info');
-          setTimeout(() => navigate('/'), 3000);
-        } else if (payload.eventType === 'UPDATE') {
-          setChat(payload.new);
-          if (payload.new.status === 'in_progress') {
-            navigate(`/game/${chatId}`);
-          }
-        }
-      })
-      .subscribe();
-
-    const questionsSubscription = supabase
-      .channel('questions_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'questions',
-        filter: `chat_id=eq.${chatId}`
-      }, fetchQuestions)
-      .subscribe();
 
     fetchData();
 
     return () => {
-      playersSubscription.unsubscribe();
-      chatSubscription.unsubscribe();
-      questionsSubscription.unsubscribe();
+      if (playersSubscription) playersSubscription.unsubscribe();
+      if (chatSubscription) chatSubscription.unsubscribe();
+      if (questionsSubscription) questionsSubscription.unsubscribe();
     };
   }, [chatId, navigate, user?.id]);
 
@@ -157,19 +181,22 @@ const WaitingRoom: React.FC = () => {
     }
 
     setLoading(true);
-    const { error } = await supabase
-      .from('chats')
-      .update({ status: 'in_progress' })
-      .eq('id', chat.id);
+    try {
+      const { error } = await supabase
+        .from('chats')
+        .update({ status: 'in_progress' })
+        .eq('id', chat.id);
 
-    if (error) {
-      displayNotification('Ошибка при запуске игры', 'error');
-      console.error(error);
-    } else {
+      if (error) throw error;
+      
       displayNotification('Игра начинается!', 'success');
       setTimeout(() => navigate(`/game/${chat.id}`), 2000);
+    } catch (error) {
+      console.error('Ошибка при запуске игры:', error);
+      displayNotification('Ошибка при запуске игры', 'error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const leaveRoom = async () => {
@@ -217,9 +244,9 @@ const WaitingRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white overflow-y-auto relative pb-24">
+    <div className="min-h-screen flex flex-col bg-white overflow-y-auto pb-24">
       {/* Анимация поиска игроков */}
-      <div className="w-full h-64 flex items-center justify-center bg-white z-10">
+      <div className="w-full h-64 flex items-center justify-center bg-white">
         <div className="relative">
           <div className="w-48 h-48 rounded-full border-4 border-[#0092FF] border-t-transparent animate-spin"></div>
           <Users className="absolute inset-0 m-auto w-12 h-12 text-[#0092FF]" />
@@ -246,8 +273,8 @@ const WaitingRoom: React.FC = () => {
       )}
 
       {/* Основной контент */}
-      <div className="flex-1 z-20 px-4">
-        <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0">
+      <div className="flex-1 px-4">
+        <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10">
           <button
             onClick={leaveRoom}
             disabled={isLeaving}
@@ -266,6 +293,7 @@ const WaitingRoom: React.FC = () => {
         </header>
 
         <div className="max-w-md mx-auto mt-4 mb-24">
+          {/* Блок с информацией о комнате */}
           <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
             <div className="flex justify-between items-center mb-4">
               <div className="text-center">
@@ -295,6 +323,7 @@ const WaitingRoom: React.FC = () => {
             </div>
           </div>
 
+          {/* Список игроков */}
           <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
             <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Users className="w-5 h-5 text-[#0092FF]" />
@@ -325,7 +354,7 @@ const WaitingRoom: React.FC = () => {
                     {player.is_owner && (
                       <div className="ml-auto flex items-center gap-1 text-yellow-500">
                         <Crown className="w-4 h-4" />
-                        <span className="text-xs">Глава</span>
+                        <span className="text-xs">Создатель</span>
                       </div>
                     )}
                   </div>
@@ -334,6 +363,7 @@ const WaitingRoom: React.FC = () => {
             </div>
           </div>
 
+          {/* Список вопросов */}
           <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
             <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <MessageSquare className="w-5 h-5 text-[#0092FF]" />
