@@ -1,23 +1,49 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Users, Play, LogOut, User, Crown, Loader2, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
 
+interface Chat {
+  id: string;
+  name: string;
+  status: string;
+  max_players: number;
+  min_players: number;
+  password?: string;
+}
+
+interface Player {
+  user_id: string;
+  is_owner: boolean;
+  profiles?: {
+    username: string;
+  };
+}
+
+interface Question {
+  id: string;
+  question_text: string;
+  is_ano: boolean;
+  order: number;
+}
+
 const WaitingRoom: React.FC = () => {
   const { id: chatId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [chat, setChat] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [questions, setQuestions] = useState<any[]>([]);
+  
+  const [chat, setChat] = useState<Chat | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreator, setIsCreator] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
   const [notificationType, setNotificationType] = useState<'success' | 'error' | 'info'>('info');
   const [isLeaving, setIsLeaving] = useState(false);
-  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  
+  const channelsRef = useRef<any[]>([]);
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
@@ -26,8 +52,11 @@ const WaitingRoom: React.FC = () => {
     setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
   }, []);
 
-  const fetchChatData = useCallback(async () => {
-    if (!chatId) return;
+  const fetchChatData = useCallback(async (): Promise<Chat | null> => {
+    if (!chatId) {
+      navigate('/');
+      return null;
+    }
 
     const { data: chatData, error: chatError } = await supabase
       .from('chats')
@@ -37,12 +66,13 @@ const WaitingRoom: React.FC = () => {
 
     if (chatError || !chatData) {
       console.error('Ошибка при получении комнаты:', chatError);
+      displayNotification('Комната не найдена', 'error');
       navigate('/');
       return null;
     }
 
     return chatData;
-  }, [chatId, navigate]);
+  }, [chatId, navigate, displayNotification]);
 
   const fetchPlayersData = useCallback(async () => {
     if (!chatId) return;
@@ -52,10 +82,13 @@ const WaitingRoom: React.FC = () => {
       .select('*, profiles(username)')
       .eq('chat_id', chatId);
 
-    if (!playersError) {
-      setPlayers(playersData || []);
-      setIsCreator(playersData?.some((p: any) => p.user_id === user?.id && p.is_owner) || false);
+    if (playersError) {
+      console.error('Ошибка при получении игроков:', playersError);
+      return;
     }
+
+    setPlayers(playersData || []);
+    setIsCreator(playersData?.some(p => p.user_id === user?.id && p.is_owner) || false);
   }, [chatId, user?.id]);
 
   const fetchQuestionsData = useCallback(async () => {
@@ -67,69 +100,74 @@ const WaitingRoom: React.FC = () => {
       .eq('chat_id', chatId)
       .order('order', { ascending: true });
 
-    if (!questionsError) {
-      setQuestions(questionsData || []);
+    if (questionsError) {
+      console.error('Ошибка при получении вопросов:', questionsError);
+      return;
     }
+
+    setQuestions(questionsData || []);
   }, [chatId]);
 
   const setupSubscriptions = useCallback(async () => {
     if (!chatId) return;
 
-    // Очищаем предыдущие подписки
-    subscriptions.forEach(sub => sub.unsubscribe());
-    setSubscriptions([]);
+    // Отписываемся от всех предыдущих каналов
+    channelsRef.current.forEach(channel => {
+      supabase.removeChannel(channel);
+    });
+    channelsRef.current = [];
 
-    // Подписка на изменения игроков
-    const playersChannel = supabase
-      .channel('chat_players_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'chat_players',
-        filter: `chat_id=eq.${chatId}`
-      }, async () => {
-        await fetchPlayersData();
-      });
+    try {
+      // Подписка на изменения игроков
+      const playersChannel = supabase
+        .channel('chat_players_changes')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'chat_players',
+          filter: `chat_id=eq.${chatId}`
+        }, fetchPlayersData);
 
-    // Подписка на изменения чата
-    const chatChannel = supabase
-      .channel('chat_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'chats',
-        filter: `id=eq.${chatId}`
-      }, async (payload) => {
-        if (payload.eventType === 'DELETE') {
-          displayNotification('Комната закрыта', 'info');
-          setTimeout(() => navigate('/'), 3000);
-        } else if (payload.eventType === 'UPDATE') {
-          setChat(payload.new);
-          if (payload.new.status === 'in_progress') {
-            navigate(`/game/${chatId}`);
+      // Подписка на изменения чата
+      const chatChannel = supabase
+        .channel('chat_changes')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'chats',
+          filter: `id=eq.${chatId}`
+        }, (payload) => {
+          if (payload.eventType === 'DELETE') {
+            displayNotification('Комната закрыта', 'info');
+            setTimeout(() => navigate('/'), 3000);
+          } else if (payload.eventType === 'UPDATE') {
+            setChat(payload.new as Chat);
+            if ((payload.new as Chat).status === 'in_progress') {
+              navigate(`/game/${chatId}`);
+            }
           }
-        }
-      });
+        });
 
-    // Подписка на изменения вопросов
-    const questionsChannel = supabase
-      .channel('questions_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'questions',
-        filter: `chat_id=eq.${chatId}`
-      }, async () => {
-        await fetchQuestionsData();
-      });
+      // Подписка на изменения вопросов
+      const questionsChannel = supabase
+        .channel('questions_changes')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'questions',
+          filter: `chat_id=eq.${chatId}`
+        }, fetchQuestionsData);
 
-    // Подписываемся и сохраняем подписки
-    playersChannel.subscribe();
-    chatChannel.subscribe();
-    questionsChannel.subscribe();
-
-    setSubscriptions([playersChannel, chatChannel, questionsChannel]);
-  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate, subscriptions]);
+      // Сохраняем подписки
+      channelsRef.current = [
+        playersChannel.subscribe(),
+        chatChannel.subscribe(),
+        questionsChannel.subscribe()
+      ];
+    } catch (error) {
+      console.error('Ошибка при создании подписок:', error);
+    }
+  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate]);
 
   useEffect(() => {
     if (!chatId) {
@@ -151,16 +189,14 @@ const WaitingRoom: React.FC = () => {
           fetchQuestionsData()
         ]);
 
-        // Если игра уже начата - переходим
         if (chatData.status === 'in_progress') {
           navigate(`/game/${chatId}`);
           return;
         }
 
         await setupSubscriptions();
-        
       } catch (error) {
-        console.error('Error:', error);
+        console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
       } finally {
         setLoading(false);
@@ -170,10 +206,13 @@ const WaitingRoom: React.FC = () => {
     initializeData();
 
     return () => {
-      // Отписываемся от всех подписок при размонтировании
-      subscriptions.forEach(sub => sub.unsubscribe());
+      // Отписываемся от всех каналов при размонтировании
+      channelsRef.current.forEach(channel => {
+        supabase.removeChannel(channel);
+      });
+      channelsRef.current = [];
     };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, subscriptions]);
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
 
   const startGame = async () => {
     if (!chat || !isCreator) return;
@@ -247,7 +286,7 @@ const WaitingRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white pb-24">
+    <div className="min-h-screen flex flex-col bg-white">
       {/* Анимация поиска игроков */}
       <div className="w-full h-64 flex items-center justify-center bg-white">
         <div className="relative">
