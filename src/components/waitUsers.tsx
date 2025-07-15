@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -17,13 +17,119 @@ const WaitingRoom: React.FC = () => {
   const [notificationMessage, setNotificationMessage] = useState('');
   const [notificationType, setNotificationType] = useState<'success' | 'error' | 'info'>('info');
   const [isLeaving, setIsLeaving] = useState(false);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
 
-  const displayNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
     setNotificationType(type);
     setShowNotification(true);
     setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
-  };
+  }, []);
+
+  const fetchChatData = useCallback(async () => {
+    if (!chatId) return;
+
+    const { data: chatData, error: chatError } = await supabase
+      .from('chats')
+      .select('*')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError || !chatData) {
+      console.error('Ошибка при получении комнаты:', chatError);
+      navigate('/');
+      return null;
+    }
+
+    return chatData;
+  }, [chatId, navigate]);
+
+  const fetchPlayersData = useCallback(async () => {
+    if (!chatId) return;
+
+    const { data: playersData, error: playersError } = await supabase
+      .from('chat_players')
+      .select('*, profiles(username)')
+      .eq('chat_id', chatId);
+
+    if (!playersError) {
+      setPlayers(playersData || []);
+      setIsCreator(playersData?.some((p: any) => p.user_id === user?.id && p.is_owner) || false);
+    }
+  }, [chatId, user?.id]);
+
+  const fetchQuestionsData = useCallback(async () => {
+    if (!chatId) return;
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('chat_id', chatId)
+      .order('order', { ascending: true });
+
+    if (!questionsError) {
+      setQuestions(questionsData || []);
+    }
+  }, [chatId]);
+
+  const setupSubscriptions = useCallback(async () => {
+    if (!chatId) return;
+
+    // Очищаем предыдущие подписки
+    subscriptions.forEach(sub => sub.unsubscribe());
+    setSubscriptions([]);
+
+    // Подписка на изменения игроков
+    const playersChannel = supabase
+      .channel('chat_players_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chat_players',
+        filter: `chat_id=eq.${chatId}`
+      }, async () => {
+        await fetchPlayersData();
+      });
+
+    // Подписка на изменения чата
+    const chatChannel = supabase
+      .channel('chat_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chats',
+        filter: `id=eq.${chatId}`
+      }, async (payload) => {
+        if (payload.eventType === 'DELETE') {
+          displayNotification('Комната закрыта', 'info');
+          setTimeout(() => navigate('/'), 3000);
+        } else if (payload.eventType === 'UPDATE') {
+          setChat(payload.new);
+          if (payload.new.status === 'in_progress') {
+            navigate(`/game/${chatId}`);
+          }
+        }
+      });
+
+    // Подписка на изменения вопросов
+    const questionsChannel = supabase
+      .channel('questions_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'questions',
+        filter: `chat_id=eq.${chatId}`
+      }, async () => {
+        await fetchQuestionsData();
+      });
+
+    // Подписываемся и сохраняем подписки
+    playersChannel.subscribe();
+    chatChannel.subscribe();
+    questionsChannel.subscribe();
+
+    setSubscriptions([playersChannel, chatChannel, questionsChannel]);
+  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate, subscriptions]);
 
   useEffect(() => {
     if (!chatId) {
@@ -31,146 +137,43 @@ const WaitingRoom: React.FC = () => {
       return;
     }
 
-    let playersSubscription: any;
-    let chatSubscription: any;
-    let questionsSubscription: any;
-
-    const fetchData = async () => {
+    const initializeData = async () => {
       try {
         setLoading(true);
         
-        // Получаем данные чата
-        const { data: chatData, error: chatError } = await supabase
-          .from('chats')
-          .select('*')
-          .eq('id', chatId)
-          .single();
-
-        if (chatError || !chatData) {
-          console.error('Ошибка при получении комнаты:', chatError);
-          navigate('/');
-          return;
-        }
+        const chatData = await fetchChatData();
+        if (!chatData) return;
 
         setChat(chatData);
 
-        // Получаем игроков
-        const { data: playersData, error: playersError } = await supabase
-          .from('chat_players')
-          .select('*, profiles(username)')
-          .eq('chat_id', chatId);
-
-        if (!playersError) {
-          setPlayers(playersData || []);
-          setIsCreator(playersData?.some(p => p.user_id === user?.id && p.is_owner) || false);
-        }
-
-        // Получаем вопросы
-        const { data: questionsData, error: questionsError } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('chat_id', chatId)
-          .order('order', { ascending: true });
-
-        if (!questionsError) {
-          setQuestions(questionsData || []);
-        }
-
-        setLoading(false);
+        await Promise.all([
+          fetchPlayersData(),
+          fetchQuestionsData()
+        ]);
 
         // Если игра уже начата - переходим
         if (chatData.status === 'in_progress') {
           navigate(`/game/${chatId}`);
+          return;
         }
 
-        // Подписка на изменения игроков
-        playersSubscription = supabase
-          .channel('chat_players_changes')
-          .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'chat_players',
-            filter: `chat_id=eq.${chatId}`
-          }, async (payload) => {
-            const { data: updatedPlayers } = await supabase
-              .from('chat_players')
-              .select('*, profiles(username)')
-              .eq('chat_id', chatId);
-
-            if (updatedPlayers) {
-              setPlayers(updatedPlayers);
-              setIsCreator(updatedPlayers.some(p => p.user_id === user?.id && p.is_owner));
-              
-              // Если вышел создатель, назначаем нового
-              if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
-                const newOwner = updatedPlayers[0].user_id;
-                await supabase
-                  .from('chat_players')
-                  .update({ is_owner: true })
-                  .eq('user_id', newOwner)
-                  .eq('chat_id', chatId);
-              }
-            }
-          })
-          .subscribe();
-
-        // Подписка на изменения чата
-        chatSubscription = supabase
-          .channel('chat_changes')
-          .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'chats',
-            filter: `id=eq.${chatId}`
-          }, async (payload) => {
-            if (payload.eventType === 'DELETE') {
-              displayNotification('Комната закрыта', 'info');
-              setTimeout(() => navigate('/'), 3000);
-            } else if (payload.eventType === 'UPDATE') {
-              setChat(payload.new);
-              if (payload.new.status === 'in_progress') {
-                navigate(`/game/${chatId}`);
-              }
-            }
-          })
-          .subscribe();
-
-        // Подписка на изменения вопросов
-        questionsSubscription = supabase
-          .channel('questions_changes')
-          .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'questions',
-            filter: `chat_id=eq.${chatId}`
-          }, async () => {
-            const { data: updatedQuestions } = await supabase
-              .from('questions')
-              .select('*')
-              .eq('chat_id', chatId)
-              .order('order', { ascending: true });
-            
-            if (updatedQuestions) {
-              setQuestions(updatedQuestions);
-            }
-          })
-          .subscribe();
-
+        await setupSubscriptions();
+        
       } catch (error) {
         console.error('Error:', error);
         displayNotification('Ошибка загрузки данных', 'error');
+      } finally {
         setLoading(false);
       }
     };
 
-    fetchData();
+    initializeData();
 
     return () => {
-      if (playersSubscription) playersSubscription.unsubscribe();
-      if (chatSubscription) chatSubscription.unsubscribe();
-      if (questionsSubscription) questionsSubscription.unsubscribe();
+      // Отписываемся от всех подписок при размонтировании
+      subscriptions.forEach(sub => sub.unsubscribe());
     };
-  }, [chatId, navigate, user?.id]);
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, subscriptions]);
 
   const startGame = async () => {
     if (!chat || !isCreator) return;
@@ -244,7 +247,7 @@ const WaitingRoom: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white overflow-y-auto pb-24">
+    <div className="min-h-screen flex flex-col bg-white pb-24">
       {/* Анимация поиска игроков */}
       <div className="w-full h-64 flex items-center justify-center bg-white">
         <div className="relative">
@@ -273,7 +276,7 @@ const WaitingRoom: React.FC = () => {
       )}
 
       {/* Основной контент */}
-      <div className="flex-1 px-4">
+      <div className="flex-1 px-4 overflow-y-auto">
         <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10">
           <button
             onClick={leaveRoom}
