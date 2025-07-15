@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Users, MessageCircle, Lock, User as UserIcon } from 'lucide-react';
+import { ArrowLeft, Users, MessageCircle, Lock, User as UserIcon, Plus, Minus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -15,13 +15,15 @@ export const JoinChat: React.FC = () => {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
   const [playersInfo, setPlayersInfo] = useState<Record<string, string[]>>({});
+  const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [questions, setQuestions] = useState<string[]>(['']);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchChats = async () => {
       try {
         setLoading(true);
         
-        // Получаем список доступных чатов
         const { data: chatsData, error: chatsError } = await supabase
           .from('chats')
           .select('*')
@@ -31,11 +33,9 @@ export const JoinChat: React.FC = () => {
 
         setChats(chatsData || []);
 
-        // Загружаем информацию об игроках для каждого чата
         const playersData: Record<string, string[]> = {};
         
         for (const chat of chatsData || []) {
-          // Исправленный запрос для получения игроков
           const { data: players, error: playersError } = await supabase
             .from('chat_players')
             .select('user_id, profiles!inner(username)')
@@ -81,15 +81,13 @@ export const JoinChat: React.FC = () => {
     setJoining(true);
 
     try {
-      // Проверяем пароль если требуется
       if (chat.password && chat.password !== enteredPassword) {
         throw new Error('Неверный пароль');
       }
 
-      // Проверяем есть ли еще место в комнате
       const { data: currentChat } = await supabase
         .from('chats')
-        .select('player_count, max_players')
+        .select('player_count, max_players, mode')
         .eq('id', chat.id)
         .single();
 
@@ -97,7 +95,6 @@ export const JoinChat: React.FC = () => {
         throw new Error('Комната уже заполнена');
       }
 
-      // Добавляем пользователя в чат
       const { error: joinError } = await supabase
         .from('chat_players')
         .insert({
@@ -108,7 +105,6 @@ export const JoinChat: React.FC = () => {
 
       if (joinError) throw joinError;
 
-      // Обновляем счетчик игроков
       const { error: updateError } = await supabase
         .from('chats')
         .update({ player_count: currentChat.player_count + 1 })
@@ -116,8 +112,13 @@ export const JoinChat: React.FC = () => {
 
       if (updateError) throw updateError;
 
-      // Успешное присоединение
-      navigate(`/waiting-room/${chat.id}`);
+      setCurrentChatId(chat.id);
+      
+      if (currentChat.mode === 'custom') {
+        setShowQuestionModal(true);
+      } else {
+        navigate(`/waiting-room/${chat.id}`);
+      }
 
     } catch (err: any) {
       console.error('Join error:', err);
@@ -131,6 +132,59 @@ export const JoinChat: React.FC = () => {
     if (selectedChat) {
       await joinChat(selectedChat, password);
     }
+  };
+
+  const addQuestion = () => {
+    setQuestions([...questions, '']);
+  };
+
+  const removeQuestion = (index: number) => {
+    if (questions.length > 1) {
+      setQuestions(questions.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateQuestion = (index: number, value: string) => {
+    const newQuestions = [...questions];
+    newQuestions[index] = value;
+    setQuestions(newQuestions);
+  };
+
+  const handleSubmitQuestions = async () => {
+    if (!currentChatId) return;
+
+    try {
+      const questionsToInsert = questions
+        .filter(q => q.trim() !== '')
+        .map((question, index) => ({
+          chat_id: currentChatId,
+          question_text: question,
+          order: index + 1,
+          is_ano: false
+        }));
+
+      if (questionsToInsert.length > 0) {
+        const { error } = await supabase
+          .from('questions')
+          .insert(questionsToInsert);
+
+        if (error) throw error;
+      }
+
+      navigate(`/waiting-room/${currentChatId}`);
+    } catch (err) {
+      console.error('Error adding questions:', err);
+      setError('Ошибка при добавлении вопросов');
+    } finally {
+      setShowQuestionModal(false);
+      setQuestions(['']);
+    }
+  };
+
+  const handleSkipQuestions = () => {
+    navigate(`/waiting-room/${currentChatId}`);
+    setShowQuestionModal(false);
+    setQuestions(['']);
   };
 
   if (loading) {
@@ -160,7 +214,6 @@ export const JoinChat: React.FC = () => {
         </div>
       </header>
 
-      {/* Встроенный компонент поиска */}
       <div className="px-4 pt-2 pb-4 z-20">
         <div className="relative">
           <input
@@ -209,6 +262,13 @@ export const JoinChat: React.FC = () => {
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-lg font-semibold text-gray-900">{chat.name}</h3>
                       {chat.password && <Lock className="w-4 h-4 text-[#0092FF]/60" />}
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
+                        chat.mode === 'custom' 
+                          ? 'bg-[#0092FF]/20 text-[#0092FF]' 
+                          : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {chat.mode === 'custom' ? 'Свои вопросы' : 'Из базы'}
+                      </div>
                     </div>
                     
                     <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
@@ -230,8 +290,8 @@ export const JoinChat: React.FC = () => {
 
                   <button
                     onClick={() => handleJoinClick(chat)}
-                    disabled={joining}
-                    className="bg-[#0092FF] text-white px-4 py-2 rounded-lg font-medium hover:bg-[#007acc] transition-all disabled:opacity-50"
+                    disabled={joining || chat.status !== 'waiting'}
+                    className="bg-[#0092FF] text-white px-4 py-2 rounded-lg font-medium hover:bg-[#007acc] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {joining ? '...' : 'Войти'}
                   </button>
@@ -274,6 +334,64 @@ export const JoinChat: React.FC = () => {
                 className="flex-1 bg-[#0092FF] text-white py-2 px-4 rounded-lg hover:bg-[#007acc] transition-all disabled:opacity-50"
               >
                 {joining ? '...' : 'Войти'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQuestionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Добавьте свои вопросы (необязательно)
+            </h3>
+            
+            <div className="space-y-3 mb-4 max-h-[300px] overflow-y-auto">
+              {questions.map((question, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={question}
+                    onChange={(e) => updateQuestion(index, e.target.value)}
+                    className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0092FF]/50 focus:border-transparent transition-all"
+                    placeholder={`Вопрос ${index + 1}`}
+                  />
+                  {questions.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeQuestion(index)}
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-between mb-4">
+              <button
+                onClick={addQuestion}
+                className="flex items-center gap-1 text-[#0092FF] hover:text-[#007acc] transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                Добавить вопрос
+              </button>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleSkipQuestions}
+                className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition-all"
+              >
+                Пропустить
+              </button>
+              <button
+                onClick={handleSubmitQuestions}
+                className="flex-1 bg-[#0092FF] text-white py-2 px-4 rounded-lg hover:bg-[#007acc] transition-all"
+              >
+                Сохранить
               </button>
             </div>
           </div>

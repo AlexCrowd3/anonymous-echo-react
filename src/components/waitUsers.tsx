@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { Users, Play, LogOut, User, Crown, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Users, Play, LogOut, User, Crown, Loader2, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
 
 const WaitingRoom: React.FC = () => {
   const { id: chatId } = useParams();
@@ -10,6 +10,7 @@ const WaitingRoom: React.FC = () => {
   const { user } = useAuth();
   const [chat, setChat] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreator, setIsCreator] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
@@ -46,7 +47,13 @@ const WaitingRoom: React.FC = () => {
       setChat(chatData);
       setIsCreator(chatData.created_by === user?.id);
       await fetchPlayers();
+      await fetchQuestions();
       setLoading(false);
+
+      // Автоматический переход если игра начата
+      if (chatData.status === 'in_progress') {
+        navigate(`/game/${chatId}`);
+      }
     };
 
     const fetchPlayers = async () => {
@@ -57,6 +64,24 @@ const WaitingRoom: React.FC = () => {
 
       if (!playersError) {
         setPlayers(playersData || []);
+        
+        // Удаляем комнату если нет игроков
+        if (playersData?.length === 0) {
+          await supabase.from('chats').delete().eq('id', chatId);
+          navigate('/');
+        }
+      }
+    };
+
+    const fetchQuestions = async () => {
+      const { data: questionsData, error: questionsError } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('chat_id', chatId)
+        .order('order', { ascending: true });
+
+      if (!questionsError) {
+        setQuestions(questionsData || []);
       }
     };
 
@@ -67,7 +92,15 @@ const WaitingRoom: React.FC = () => {
         schema: 'public',
         table: 'chat_players',
         filter: `chat_id=eq.${chatId}`
-      }, fetchPlayers)
+      }, async (payload) => {
+        await fetchPlayers();
+        
+        // Если пользователь вышел - показываем уведомление
+        if (payload.eventType === 'DELETE' && payload.old.user_id === user?.id) {
+          displayNotification('Вы вышли из комнаты', 'success');
+          setTimeout(() => navigate('/'), 2000);
+        }
+      })
       .subscribe();
 
     const chatSubscription = supabase
@@ -81,8 +114,25 @@ const WaitingRoom: React.FC = () => {
         if (payload.eventType === 'DELETE') {
           displayNotification('Комната закрыта создателем', 'info');
           setTimeout(() => navigate('/'), 3000);
+        } else if (payload.eventType === 'UPDATE') {
+          setChat(payload.new);
+          
+          // Автоматический переход если игра начата
+          if (payload.new.status === 'in_progress') {
+            navigate(`/game/${chatId}`);
+          }
         }
       })
+      .subscribe();
+
+    const questionsSubscription = supabase
+      .channel('questions_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'questions',
+        filter: `chat_id=eq.${chatId}`
+      }, fetchQuestions)
       .subscribe();
 
     fetchData();
@@ -90,21 +140,22 @@ const WaitingRoom: React.FC = () => {
     return () => {
       playersSubscription.unsubscribe();
       chatSubscription.unsubscribe();
+      questionsSubscription.unsubscribe();
     };
   }, [chatId, navigate, user?.id]);
 
   const startGame = async () => {
     if (!chat || !isCreator) return;
     
-    if (players.length < chat.max_players) {
-      displayNotification(`Нужно ${chat.max_players} игроков для начала`, 'error');
+    if (players.length < chat.min_players) {
+      displayNotification(`Нужно минимум ${chat.min_players} игроков`, 'error');
       return;
     }
 
     setLoading(true);
     const { error } = await supabase
       .from('chats')
-      .update({ status: 'started' })
+      .update({ status: 'in_progress' })
       .eq('id', chat.id);
 
     setLoading(false);
@@ -116,7 +167,7 @@ const WaitingRoom: React.FC = () => {
     }
 
     displayNotification('Игра начинается!', 'success');
-    setTimeout(() => navigate(`/chat/${chat.id}`), 2000);
+    setTimeout(() => navigate(`/game/${chat.id}`), 2000);
   };
 
   const leaveRoom = async () => {
@@ -124,6 +175,16 @@ const WaitingRoom: React.FC = () => {
     setIsLeaving(true);
 
     try {
+      // Удаляем пользователя из комнаты
+      const { error } = await supabase
+        .from('chat_players')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('chat_id', chatId);
+
+      if (error) throw error;
+
+      // Если это создатель - удаляем всю комнату
       if (isCreator) {
         await supabase.from('questions').delete().eq('chat_id', chatId);
         await supabase.from('chat_players').delete().eq('chat_id', chatId);
@@ -134,20 +195,10 @@ const WaitingRoom: React.FC = () => {
           .eq('id', chatId);
 
         if (deleteError) throw deleteError;
-        
-        displayNotification('Комната успешно удалена', 'success');
-        setTimeout(() => navigate('/'), 3000);
-      } else {
-        const { error } = await supabase
-          .from('chat_players')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('chat_id', chatId);
-
-        if (error) throw error;
-        displayNotification('Вы вышли из комнаты', 'success');
-        setTimeout(() => navigate('/'), 2000);
       }
+
+      displayNotification(isCreator ? 'Комната удалена' : 'Вы вышли из комнаты', 'success');
+      setTimeout(() => navigate('/'), isCreator ? 3000 : 2000);
     } catch (error) {
       console.error('Ошибка при выходе из комнаты:', error);
       displayNotification('Ошибка при выходе', 'error');
@@ -243,7 +294,7 @@ const WaitingRoom: React.FC = () => {
               <div 
                 className="bg-[#0092FF] h-2.5 rounded-full transition-all duration-500" 
                 style={{ 
-                  width: `${Math.min(100, (players.length / (chat?.max_players || 1)) * 100)}%` 
+                  width: "${Math.min(100, (players.length / (chat?.max_players || 1)) * 100}%"
                 }}
               ></div>
             </div>
@@ -252,7 +303,7 @@ const WaitingRoom: React.FC = () => {
           <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
             <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Users className="w-5 h-5 text-[#0092FF]" />
-              Участники комнаты
+              Участники комнаты ({players.length})
             </h2>
             
             <div className="space-y-3 max-h-[40vh] overflow-y-auto">
@@ -287,6 +338,40 @@ const WaitingRoom: React.FC = () => {
               )}
             </div>
           </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-[#0092FF]" />
+              Вопросы ({questions.length})
+            </h2>
+            
+            <div className="space-y-3 max-h-[40vh] overflow-y-auto">
+              {questions.length === 0 ? (
+                <div className="text-center text-gray-500 py-4">
+                  Вопросы не добавлены
+                </div>
+              ) : (
+                questions.map((question, index) => (
+                  <div 
+                    key={question.id}
+                    className="flex items-start gap-3 p-3 rounded-lg bg-gray-50"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF] mt-1">
+                      <span className="text-sm font-bold">{index + 1}</span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-medium text-gray-900">
+                        {question.question_text}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {question.is_ano ? 'Из базы вопросов' : 'Пользовательский'}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -296,9 +381,9 @@ const WaitingRoom: React.FC = () => {
         style={{ animation: 'slideUp 0.5s ease-out forwards' }}>
           <button
             onClick={startGame}
-            disabled={players.length < (chat?.max_players || 0) || loading}
+            disabled={players.length < (chat?.min_players || 0) || loading}
             className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
-              players.length >= (chat?.max_players || 0) 
+              players.length >= (chat?.min_players || 0) 
                 ? 'hover:bg-[#007acc]' 
                 : 'opacity-50 cursor-not-allowed'
             }`}
