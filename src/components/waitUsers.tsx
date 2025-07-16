@@ -88,9 +88,27 @@ const WaitingRoom: React.FC = () => {
       return;
     }
 
-    setPlayers(playersData || []);
-    setIsCreator(playersData?.some(p => p.user_id === user?.id && p.is_owner) || false);
-  }, [chatId, user?.id]);
+    const updatedPlayers = playersData || [];
+    setPlayers(updatedPlayers);
+    
+    // Проверяем, является ли текущий пользователь создателем
+    const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
+    setIsCreator(currentUserIsCreator);
+
+    // Если нет создателя, назначаем нового
+    if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
+      const newOwnerId = updatedPlayers[0].user_id;
+      const { error } = await supabase
+        .from('chat_players')
+        .update({ is_owner: true })
+        .eq('user_id', newOwnerId)
+        .eq('chat_id', chatId);
+
+      if (!error) {
+        displayNotification('Новый создатель комнаты назначен', 'info');
+      }
+    }
+  }, [chatId, user?.id, displayNotification]);
 
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
@@ -128,7 +146,7 @@ const WaitingRoom: React.FC = () => {
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
         }, async (payload) => {
-          // Принудительно обновляем данные игроков
+          console.log('Изменение в игроках:', payload);
           await fetchPlayersData();
         });
 
@@ -140,7 +158,8 @@ const WaitingRoom: React.FC = () => {
           schema: 'public',
           table: 'chats',
           filter: `id=eq.${chatId}`
-        }, (payload) => {
+        }, async (payload) => {
+          console.log('Изменение в чате:', payload);
           if (payload.eventType === 'DELETE') {
             displayNotification('Комната закрыта', 'info');
             setTimeout(() => navigate('/'), 3000);
@@ -160,8 +179,8 @@ const WaitingRoom: React.FC = () => {
           schema: 'public',
           table: 'questions',
           filter: `chat_id=eq.${chatId}`
-        }, async () => {
-          // Принудительно обновляем вопросы
+        }, async (payload) => {
+          console.log('Изменение в вопросах:', payload);
           await fetchQuestionsData();
         });
 
@@ -451,8 +470,8 @@ const WaitingRoom: React.FC = () => {
         </div>
       </div>
 
-      {/* Кнопка начала игры */}
-      {isCreator && (
+      {/* Кнопка начала игры (только для создателя) */}
+      {isCreator && chat?.status !== 'in_progress' && (
         <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
           <button
             onClick={startGame}
