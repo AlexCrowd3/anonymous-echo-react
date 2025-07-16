@@ -45,6 +45,7 @@ const WaitingRoom: React.FC = () => {
   
   const channelsRef = useRef<any[]>([]);
   const isCreatorRef = useRef(false);
+  const dataPollingRef = useRef<NodeJS.Timeout>();
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
@@ -149,6 +150,7 @@ const WaitingRoom: React.FC = () => {
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
         }, async (payload) => {
+          console.log('Изменение в игроках:', payload);
           await fetchPlayersData();
         });
 
@@ -161,6 +163,7 @@ const WaitingRoom: React.FC = () => {
           table: 'chats',
           filter: `id=eq.${chatId}`
         }, async (payload) => {
+          console.log('Изменение в чате:', payload);
           if (payload.eventType === 'DELETE') {
             displayNotification('Комната закрыта', 'info');
             setTimeout(() => navigate('/'), 3000);
@@ -174,15 +177,48 @@ const WaitingRoom: React.FC = () => {
           }
         });
 
+      // Подписка на изменения вопросов
+      const questionsChannel = supabase
+        .channel('questions_changes')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'questions',
+          filter: `chat_id=eq.${chatId}`
+        }, async (payload) => {
+          console.log('Изменение в вопросах:', payload);
+          await fetchQuestionsData();
+        });
+
       // Подписываемся и сохраняем подписки
       channelsRef.current = [
         playersChannel.subscribe(),
-        chatChannel.subscribe()
+        chatChannel.subscribe(),
+        questionsChannel.subscribe()
       ];
     } catch (error) {
       console.error('Ошибка при создании подписок:', error);
     }
-  }, [chatId, displayNotification, fetchPlayersData, navigate]);
+  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate]);
+
+  // Функция периодической проверки данных
+  const startDataPolling = useCallback(() => {
+    // Очищаем предыдущий интервал
+    if (dataPollingRef.current) {
+      clearInterval(dataPollingRef.current);
+    }
+
+    // Устанавливаем новый интервал
+    dataPollingRef.current = setInterval(async () => {
+      await Promise.all([fetchPlayersData(), fetchQuestionsData()]);
+    }, 3000); // Проверка каждые 3 секунды
+
+    return () => {
+      if (dataPollingRef.current) {
+        clearInterval(dataPollingRef.current);
+      }
+    };
+  }, [fetchPlayersData, fetchQuestionsData]);
 
   useEffect(() => {
     if (!chatId) {
@@ -210,6 +246,7 @@ const WaitingRoom: React.FC = () => {
         }
 
         await setupSubscriptions();
+        startDataPolling();
       } catch (error) {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
@@ -226,8 +263,13 @@ const WaitingRoom: React.FC = () => {
         supabase.removeChannel(channel);
       });
       channelsRef.current = [];
+      
+      // Очищаем интервал опроса
+      if (dataPollingRef.current) {
+        clearInterval(dataPollingRef.current);
+      }
     };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, startDataPolling]);
 
   const startGame = async () => {
     if (!chat || !isCreatorRef.current) return;
