@@ -44,8 +44,7 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
-  const retryCountRef = useRef(0);
-  const maxRetries = 3;
+  const isCreatorRef = useRef(false);
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
@@ -93,6 +92,7 @@ const WaitingRoom: React.FC = () => {
       // Проверяем, является ли текущий пользователь создателем
       const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
       setIsCreator(currentUserIsCreator);
+      isCreatorRef.current = currentUserIsCreator;
 
       // Если нет создателя, назначаем нового
       if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
@@ -149,7 +149,6 @@ const WaitingRoom: React.FC = () => {
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
         }, async (payload) => {
-          console.log('Изменение в игроках:', payload);
           await fetchPlayersData();
         });
 
@@ -162,80 +161,28 @@ const WaitingRoom: React.FC = () => {
           table: 'chats',
           filter: `id=eq.${chatId}`
         }, async (payload) => {
-          console.log('Изменение в чате:', payload);
           if (payload.eventType === 'DELETE') {
             displayNotification('Комната закрыта', 'info');
             setTimeout(() => navigate('/'), 3000);
           } else if (payload.eventType === 'UPDATE') {
-            setChat(payload.new as Chat);
-            if ((payload.new as Chat).status === 'in_progress') {
+            const updatedChat = payload.new as Chat;
+            setChat(updatedChat);
+            
+            if (updatedChat.status === 'in_progress') {
               navigate(`/game/${chatId}`);
             }
           }
         });
 
-      // Подписка на изменения вопросов
-      const questionsChannel = supabase
-        .channel('questions_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'questions',
-          filter: `chat_id=eq.${chatId}`
-        }, async (payload) => {
-          console.log('Изменение в вопросах:', payload);
-          await fetchQuestionsData();
-        });
-
-      // Подписываемся с обработкой ошибок WebSocket
-      const subscribeWithRetry = async (channel: any, channelName: string) => {
-        try {
-          const subscribedChannel = channel.subscribe(
-            (status: string) => {
-              if (status === 'CHANNEL_ERROR') {
-                console.error(`Ошибка канала ${channelName}`);
-                if (retryCountRef.current < maxRetries) {
-                  retryCountRef.current++;
-                  setTimeout(() => subscribeWithRetry(channel, channelName), 2000);
-                }
-              } else if (status === 'SUBSCRIBED') {
-                retryCountRef.current = 0;
-              }
-            }
-          );
-          return subscribedChannel;
-        } catch (error) {
-          console.error(`Ошибка подписки на канал ${channelName}:`, error);
-          return null;
-        }
-      };
-
-      // Сохраняем подписки
-      const playersSub = await subscribeWithRetry(playersChannel, 'players');
-      const chatSub = await subscribeWithRetry(chatChannel, 'chat');
-      const questionsSub = await subscribeWithRetry(questionsChannel, 'questions');
-
-      if (playersSub) channelsRef.current.push(playersSub);
-      if (chatSub) channelsRef.current.push(chatSub);
-      if (questionsSub) channelsRef.current.push(questionsSub);
-
+      // Подписываемся и сохраняем подписки
+      channelsRef.current = [
+        playersChannel.subscribe(),
+        chatChannel.subscribe()
+      ];
     } catch (error) {
       console.error('Ошибка при создании подписок:', error);
-      if (retryCountRef.current < maxRetries) {
-        retryCountRef.current++;
-        setTimeout(setupSubscriptions, 2000);
-      }
     }
-  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate]);
-
-  // Функция периодической проверки данных
-  const startDataPolling = useCallback(() => {
-    const interval = setInterval(async () => {
-      await Promise.all([fetchPlayersData(), fetchQuestionsData()]);
-    }, 5000); // Проверка каждые 5 секунд
-
-    return () => clearInterval(interval);
-  }, [fetchPlayersData, fetchQuestionsData]);
+  }, [chatId, displayNotification, fetchPlayersData, navigate]);
 
   useEffect(() => {
     if (!chatId) {
@@ -263,7 +210,6 @@ const WaitingRoom: React.FC = () => {
         }
 
         await setupSubscriptions();
-        startDataPolling();
       } catch (error) {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
@@ -281,10 +227,10 @@ const WaitingRoom: React.FC = () => {
       });
       channelsRef.current = [];
     };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, startDataPolling]);
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
 
   const startGame = async () => {
-    if (!chat || !isCreator) return;
+    if (!chat || !isCreatorRef.current) return;
     
     if (players.length < chat.min_players) {
       displayNotification(`Нужно минимум ${chat.min_players} игроков`, 'error');
@@ -295,13 +241,16 @@ const WaitingRoom: React.FC = () => {
     try {
       const { error } = await supabase
         .from('chats')
-        .update({ status: 'in_progress' })
+        .update({ 
+          status: 'in_progress',
+          started_at: new Date().toISOString()
+        })
         .eq('id', chat.id);
 
       if (error) throw error;
       
       displayNotification('Игра начинается!', 'success');
-      setTimeout(() => navigate(`/game/${chat.id}`), 2000);
+      navigate(`/game/${chat.id}`);
     } catch (error) {
       console.error('Ошибка при запуске игры:', error);
       displayNotification('Ошибка при запуске игры', 'error');
