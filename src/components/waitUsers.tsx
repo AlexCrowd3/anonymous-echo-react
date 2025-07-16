@@ -44,7 +44,8 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
@@ -78,53 +79,55 @@ const WaitingRoom: React.FC = () => {
   const fetchPlayersData = useCallback(async () => {
     if (!chatId) return;
 
-    const { data: playersData, error: playersError } = await supabase
-      .from('chat_players')
-      .select('*, profiles(username)')
-      .eq('chat_id', chatId);
-
-    if (playersError) {
-      console.error('Ошибка при получении игроков:', playersError);
-      return;
-    }
-
-    const updatedPlayers = playersData || [];
-    setPlayers(updatedPlayers);
-    
-    // Проверяем, является ли текущий пользователь создателем
-    const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
-    setIsCreator(currentUserIsCreator);
-
-    // Если нет создателя, назначаем нового
-    if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
-      const newOwnerId = updatedPlayers[0].user_id;
-      const { error } = await supabase
+    try {
+      const { data: playersData, error: playersError } = await supabase
         .from('chat_players')
-        .update({ is_owner: true })
-        .eq('user_id', newOwnerId)
+        .select('*, profiles(username)')
         .eq('chat_id', chatId);
 
-      if (!error) {
-        displayNotification('Новый создатель комнаты назначен', 'info');
+      if (playersError) throw playersError;
+
+      const updatedPlayers = playersData || [];
+      setPlayers(updatedPlayers);
+      
+      // Проверяем, является ли текущий пользователь создателем
+      const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
+      setIsCreator(currentUserIsCreator);
+
+      // Если нет создателя, назначаем нового
+      if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
+        const newOwnerId = updatedPlayers[0].user_id;
+        const { error } = await supabase
+          .from('chat_players')
+          .update({ is_owner: true })
+          .eq('user_id', newOwnerId)
+          .eq('chat_id', chatId);
+
+        if (!error) {
+          displayNotification('Новый создатель комнаты назначен', 'info');
+        }
       }
+    } catch (error) {
+      console.error('Ошибка при загрузке игроков:', error);
     }
   }, [chatId, user?.id, displayNotification]);
 
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
 
-    const { data: questionsData, error: questionsError } = await supabase
-      .from('questions')
-      .select('*')
-      .eq('chat_id', chatId)
-      .order('order', { ascending: true });
+    try {
+      const { data: questionsData, error: questionsError } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('chat_id', chatId)
+        .order('order', { ascending: true });
 
-    if (questionsError) {
-      console.error('Ошибка при получении вопросов:', questionsError);
-      return;
+      if (questionsError) throw questionsError;
+
+      setQuestions(questionsData || []);
+    } catch (error) {
+      console.error('Ошибка при загрузке вопросов:', error);
     }
-
-    setQuestions(questionsData || []);
   }, [chatId]);
 
   const setupSubscriptions = useCallback(async () => {
@@ -184,16 +187,55 @@ const WaitingRoom: React.FC = () => {
           await fetchQuestionsData();
         });
 
+      // Подписываемся с обработкой ошибок WebSocket
+      const subscribeWithRetry = async (channel: any, channelName: string) => {
+        try {
+          const subscribedChannel = channel.subscribe(
+            (status: string) => {
+              if (status === 'CHANNEL_ERROR') {
+                console.error(`Ошибка канала ${channelName}`);
+                if (retryCountRef.current < maxRetries) {
+                  retryCountRef.current++;
+                  setTimeout(() => subscribeWithRetry(channel, channelName), 2000);
+                }
+              } else if (status === 'SUBSCRIBED') {
+                retryCountRef.current = 0;
+              }
+            }
+          );
+          return subscribedChannel;
+        } catch (error) {
+          console.error(`Ошибка подписки на канал ${channelName}:`, error);
+          return null;
+        }
+      };
+
       // Сохраняем подписки
-      channelsRef.current = [
-        playersChannel.subscribe(),
-        chatChannel.subscribe(),
-        questionsChannel.subscribe()
-      ];
+      const playersSub = await subscribeWithRetry(playersChannel, 'players');
+      const chatSub = await subscribeWithRetry(chatChannel, 'chat');
+      const questionsSub = await subscribeWithRetry(questionsChannel, 'questions');
+
+      if (playersSub) channelsRef.current.push(playersSub);
+      if (chatSub) channelsRef.current.push(chatSub);
+      if (questionsSub) channelsRef.current.push(questionsSub);
+
     } catch (error) {
       console.error('Ошибка при создании подписок:', error);
+      if (retryCountRef.current < maxRetries) {
+        retryCountRef.current++;
+        setTimeout(setupSubscriptions, 2000);
+      }
     }
   }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate]);
+
+  // Функция периодической проверки данных
+  const startDataPolling = useCallback(() => {
+    const interval = setInterval(async () => {
+      await Promise.all([fetchPlayersData(), fetchQuestionsData()]);
+    }, 5000); // Проверка каждые 5 секунд
+
+    return () => clearInterval(interval);
+  }, [fetchPlayersData, fetchQuestionsData]);
 
   useEffect(() => {
     if (!chatId) {
@@ -221,6 +263,7 @@ const WaitingRoom: React.FC = () => {
         }
 
         await setupSubscriptions();
+        startDataPolling();
       } catch (error) {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
@@ -238,7 +281,7 @@ const WaitingRoom: React.FC = () => {
       });
       channelsRef.current = [];
     };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, startDataPolling]);
 
   const startGame = async () => {
     if (!chat || !isCreator) return;
@@ -342,7 +385,7 @@ const WaitingRoom: React.FC = () => {
 
       {/* Основной контент с прокруткой */}
       <div className="flex-1 overflow-hidden">
-        <div className="h-full overflow-y-auto" ref={contentRef}>
+        <div className="h-full overflow-y-auto">
           <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10 px-4">
             <button
               onClick={leaveRoom}
