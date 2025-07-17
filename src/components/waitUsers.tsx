@@ -11,6 +11,7 @@ interface Chat {
   max_players: number;
   min_players: number;
   password?: string;
+  started_at?: string;
 }
 
 interface Player {
@@ -90,12 +91,11 @@ const WaitingRoom: React.FC = () => {
       const updatedPlayers = playersData || [];
       setPlayers(updatedPlayers);
       
-      // Проверяем, является ли текущий пользователь создателем
       const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
       setIsCreator(currentUserIsCreator);
       isCreatorRef.current = currentUserIsCreator;
 
-      // Если нет создателя, назначаем нового
+      // Если нет создателя и есть игроки - назначаем нового
       if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
         const newOwnerId = updatedPlayers[0].user_id;
         const { error } = await supabase
@@ -106,6 +106,8 @@ const WaitingRoom: React.FC = () => {
 
         if (!error) {
           displayNotification('Новый создатель комнаты назначен', 'info');
+          // Обновляем данные после назначения нового создателя
+          await fetchPlayersData();
         }
       }
     } catch (error) {
@@ -150,7 +152,6 @@ const WaitingRoom: React.FC = () => {
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
         }, async (payload) => {
-          console.log('Изменение в игроках:', payload);
           await fetchPlayersData();
         });
 
@@ -163,7 +164,6 @@ const WaitingRoom: React.FC = () => {
           table: 'chats',
           filter: `id=eq.${chatId}`
         }, async (payload) => {
-          console.log('Изменение в чате:', payload);
           if (payload.eventType === 'DELETE') {
             displayNotification('Комната закрыта', 'info');
             setTimeout(() => navigate('/'), 3000);
@@ -177,99 +177,27 @@ const WaitingRoom: React.FC = () => {
           }
         });
 
-      // Подписка на изменения вопросов
-      const questionsChannel = supabase
-        .channel('questions_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'questions',
-          filter: `chat_id=eq.${chatId}`
-        }, async (payload) => {
-          console.log('Изменение в вопросах:', payload);
-          await fetchQuestionsData();
-        });
-
       // Подписываемся и сохраняем подписки
       channelsRef.current = [
-        playersChannel.subscribe(),
-        chatChannel.subscribe(),
-        questionsChannel.subscribe()
+        playersChannel.subscribe(
+          (status) => {
+            if (status === 'CHANNEL_ERROR') {
+              console.error('Ошибка подключения к каналу игроков');
+            }
+          }
+        ),
+        chatChannel.subscribe(
+          (status) => {
+            if (status === 'CHANNEL_ERROR') {
+              console.error('Ошибка подключения к каналу чата');
+            }
+          }
+        )
       ];
     } catch (error) {
       console.error('Ошибка при создании подписок:', error);
     }
-  }, [chatId, displayNotification, fetchPlayersData, fetchQuestionsData, navigate]);
-
-  // Функция периодической проверки данных
-  const startDataPolling = useCallback(() => {
-    // Очищаем предыдущий интервал
-    if (dataPollingRef.current) {
-      clearInterval(dataPollingRef.current);
-    }
-
-    // Устанавливаем новый интервал
-    dataPollingRef.current = setInterval(async () => {
-      await Promise.all([fetchPlayersData(), fetchQuestionsData()]);
-    }, 3000); // Проверка каждые 3 секунды
-
-    return () => {
-      if (dataPollingRef.current) {
-        clearInterval(dataPollingRef.current);
-      }
-    };
-  }, [fetchPlayersData, fetchQuestionsData]);
-
-  useEffect(() => {
-    if (!chatId) {
-      navigate('/');
-      return;
-    }
-
-    const initializeData = async () => {
-      try {
-        setLoading(true);
-        
-        const chatData = await fetchChatData();
-        if (!chatData) return;
-
-        setChat(chatData);
-
-        await Promise.all([
-          fetchPlayersData(),
-          fetchQuestionsData()
-        ]);
-
-        if (chatData.status === 'in_progress') {
-          navigate(`/game/${chatId}`);
-          return;
-        }
-
-        await setupSubscriptions();
-        startDataPolling();
-      } catch (error) {
-        console.error('Ошибка инициализации:', error);
-        displayNotification('Ошибка загрузки данных', 'error');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initializeData();
-
-    return () => {
-      // Отписываемся от всех каналов при размонтировании
-      channelsRef.current.forEach(channel => {
-        supabase.removeChannel(channel);
-      });
-      channelsRef.current = [];
-      
-      // Очищаем интервал опроса
-      if (dataPollingRef.current) {
-        clearInterval(dataPollingRef.current);
-      }
-    };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions, startDataPolling]);
+  }, [chatId, displayNotification, fetchPlayersData, navigate]);
 
   const startGame = async () => {
     if (!chat || !isCreatorRef.current) return;
@@ -281,15 +209,21 @@ const WaitingRoom: React.FC = () => {
 
     setLoading(true);
     try {
-      const { error } = await supabase
+      // Сначала обновляем статус без started_at
+      const { error: statusError } = await supabase
         .from('chats')
-        .update({ 
-          status: 'in_progress',
-          started_at: new Date().toISOString()
-        })
+        .update({ status: 'in_progress' })
         .eq('id', chat.id);
 
-      if (error) throw error;
+      if (statusError) throw statusError;
+
+      // Затем обновляем started_at отдельным запросом
+      const { error: dateError } = await supabase
+        .from('chats')
+        .update({ started_at: new Date().toISOString() })
+        .eq('id', chat.id);
+
+      if (dateError) throw dateError;
       
       displayNotification('Игра начинается!', 'success');
       navigate(`/game/${chat.id}`);
@@ -321,10 +255,13 @@ const WaitingRoom: React.FC = () => {
         .select('*', { count: 'exact', head: true })
         .eq('chat_id', chatId);
 
-      // Если игроков не осталось - удаляем комнату
+      // Если игроков не осталось - удаляем комнату и вопросы
       if (count === 0) {
         await supabase.from('questions').delete().eq('chat_id', chatId);
         await supabase.from('chats').delete().eq('id', chatId);
+      } else {
+        // Если остались игроки - обновляем данные
+        await fetchPlayersData();
       }
 
       displayNotification('Вы вышли из комнаты', 'success');
@@ -336,6 +273,63 @@ const WaitingRoom: React.FC = () => {
       setIsLeaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!chatId) {
+      navigate('/');
+      return;
+    }
+
+    const initializeData = async () => {
+      try {
+        setLoading(true);
+        
+        const chatData = await fetchChatData();
+        if (!chatData) return;
+
+        setChat(chatData);
+
+        await Promise.all([
+          fetchPlayersData(),
+          fetchQuestionsData()
+        ]);
+
+        if (chatData.status === 'in_progress') {
+          navigate(`/game/${chatId}`);
+          return;
+        }
+
+        await setupSubscriptions();
+        
+        // Запускаем периодическую проверку данных
+        dataPollingRef.current = setInterval(async () => {
+          await fetchPlayersData();
+          await fetchQuestionsData();
+        }, 5000);
+
+      } catch (error) {
+        console.error('Ошибка инициализации:', error);
+        displayNotification('Ошибка загрузки данных', 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeData();
+
+    return () => {
+      // Отписываемся от всех каналов при размонтировании
+      channelsRef.current.forEach(channel => {
+        supabase.removeChannel(channel);
+      });
+      channelsRef.current = [];
+      
+      // Очищаем интервал проверки данных
+      if (dataPollingRef.current) {
+        clearInterval(dataPollingRef.current);
+      }
+    };
+  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
 
   if (loading && !chat) {
     return (
