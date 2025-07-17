@@ -48,13 +48,10 @@ const WaitingRoom: React.FC = () => {
   const isMountedRef = useRef(true);
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    if (!isMountedRef.current) return;
     setNotificationMessage(message);
     setNotificationType(type);
     setShowNotification(true);
-    setTimeout(() => {
-      if (isMountedRef.current) setShowNotification(false);
-    }, type === 'success' ? 3000 : 2000);
+    setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
   }, []);
 
   const fetchChatData = useCallback(async (): Promise<Chat | null> => {
@@ -93,11 +90,10 @@ const WaitingRoom: React.FC = () => {
       const updatedPlayers = playersData || [];
       setPlayers(updatedPlayers);
       
-      // Проверяем, является ли текущий пользователь создателем
+      // Проверяем является ли текущий пользователь создателем
       const currentUserIsCreator = updatedPlayers.some(
         p => p.user_id === user?.id && p.is_owner
       );
-      
       setIsCreator(currentUserIsCreator);
 
       // Если нет создателя, но есть игроки - назначаем нового
@@ -139,7 +135,7 @@ const WaitingRoom: React.FC = () => {
   const setupSubscriptions = useCallback(() => {
     if (!chatId) return;
 
-    // Отписываемся от всех предыдущих каналов
+    // Отписываемся от предыдущих подписок
     channelsRef.current.forEach(channel => {
       supabase.removeChannel(channel);
     });
@@ -147,14 +143,14 @@ const WaitingRoom: React.FC = () => {
 
     // Подписка на изменения игроков
     const playersChannel = supabase
-      .channel('chat_players_changes')
+      .channel('players_changes')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'chat_players',
         filter: `chat_id=eq.${chatId}`
-      }, async () => {
-        await fetchPlayersData();
+      }, () => {
+        fetchPlayersData();
       });
 
     // Подписка на изменения чата
@@ -165,11 +161,8 @@ const WaitingRoom: React.FC = () => {
         schema: 'public',
         table: 'chats',
         filter: `id=eq.${chatId}`
-      }, async (payload) => {
-        if (payload.eventType === 'DELETE') {
-          displayNotification('Комната закрыта', 'info');
-          setTimeout(() => navigate('/'), 3000);
-        } else if (payload.eventType === 'UPDATE') {
+      }, (payload) => {
+        if (payload.eventType === 'UPDATE') {
           const updatedChat = payload.new as Chat;
           setChat(updatedChat);
           
@@ -179,7 +172,6 @@ const WaitingRoom: React.FC = () => {
         }
       });
 
-    // Подписываемся и сохраняем подписки
     const playersSubscription = playersChannel.subscribe();
     const chatSubscription = chatChannel.subscribe();
     
@@ -189,7 +181,7 @@ const WaitingRoom: React.FC = () => {
       if (playersSubscription) supabase.removeChannel(playersSubscription);
       if (chatSubscription) supabase.removeChannel(chatSubscription);
     };
-  }, [chatId, displayNotification, fetchPlayersData, navigate]);
+  }, [chatId, fetchPlayersData, navigate]);
 
   const startGame = async () => {
     if (!chat || !isCreator) return;
@@ -216,7 +208,6 @@ const WaitingRoom: React.FC = () => {
 
       if (error) throw error;
       
-      // Немедленный переход без ожидания обновления через подписку
       navigate(`/game/${chat.id}`);
     } catch (error) {
       console.error('Ошибка при запуске игры:', error);
@@ -230,12 +221,7 @@ const WaitingRoom: React.FC = () => {
     setIsLeaving(true);
 
     try {
-      // Проверяем, является ли пользователь создателем
-      const isCurrentUserCreator = players.some(
-        p => p.user_id === user.id && p.is_owner
-      );
-      
-      // Удаляем пользователя из комнаты
+      // Удаляем текущего пользователя из комнаты
       const { error } = await supabase
         .from('chat_players')
         .delete()
@@ -243,20 +229,6 @@ const WaitingRoom: React.FC = () => {
         .eq('chat_id', chatId);
 
       if (error) throw error;
-
-      // Проверяем остались ли игроки
-      const { count } = await supabase
-        .from('chat_players')
-        .select('*', { count: 'exact', head: true })
-        .eq('chat_id', chatId);
-
-      // Если игроков не осталось - удаляем комнату и вопросы
-      if (count === 0) {
-        await supabase.from('questions').delete().eq('chat_id', chatId);
-        await supabase.from('chats').delete().eq('id', chatId);
-      } else if (isCurrentUserCreator) {
-        displayNotification('Вы вышли из комнаты. Новый создатель будет назначен.', 'info');
-      }
 
       displayNotification('Вы вышли из комнаты', 'success');
       setTimeout(() => navigate('/'), 2000);
@@ -308,7 +280,6 @@ const WaitingRoom: React.FC = () => {
 
     return () => {
       isMountedRef.current = false;
-      // Отписываемся от всех каналов при размонтировании
       channelsRef.current.forEach(channel => {
         supabase.removeChannel(channel);
       });
@@ -326,14 +297,6 @@ const WaitingRoom: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-white overflow-hidden">
-      {/* Анимация поиска игроков */}
-      <div className="w-full h-64 flex-shrink-0 flex items-center justify-center bg-white">
-        <div className="relative">
-          <div className="w-48 h-48 rounded-full border-4 border-[#0092FF] border-t-transparent animate-spin"></div>
-          <Users className="absolute inset-0 m-auto w-12 h-12 text-[#0092FF]" />
-        </div>
-      </div>
-
       {/* Уведомление */}
       {showNotification && (
         <div className={`fixed inset-0 flex items-center justify-center z-50 ${
@@ -353,7 +316,7 @@ const WaitingRoom: React.FC = () => {
         </div>
       )}
 
-      {/* Основной контент с прокруткой */}
+      {/* Основной контент */}
       <div className="flex-1 overflow-hidden">
         <div className="h-full overflow-y-auto">
           <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10 px-4">
@@ -375,7 +338,7 @@ const WaitingRoom: React.FC = () => {
           </header>
 
           <div className="max-w-md mx-auto mt-4 pb-24 px-4">
-            {/* Блок с информацией о комнате */}
+            {/* Информация о комнате */}
             <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
               <div className="flex justify-between items-center mb-4">
                 <div className="text-center">
@@ -484,28 +447,28 @@ const WaitingRoom: React.FC = () => {
       </div>
 
       {/* Кнопка начала игры (только для создателя) */}
-      {isCreator && chat?.status === 'waiting' && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
-          <button
-            onClick={startGame}
-            disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
-            className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
-              (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0)
-                ? 'hover:bg-[#007acc]' 
-                : 'opacity-50 cursor-not-allowed'
-            }`}
-          >
-            {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <>
-                <Play className="w-5 h-5" />
-                Начать игру ({players.length}/{chat?.max_players})
-              </>
-            )}
-          </button>
-        </div>
-      )}
+    {isCreator && chat?.status === 'waiting' && (
+      <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
+        <button
+          onClick={startGame}
+          disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
+          className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
+            (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0)
+              ? 'hover:bg-[#007acc]' 
+              : 'opacity-50 cursor-not-allowed'
+          }`}
+        >
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <>
+              <Play className="w-5 h-5" />
+              Начать игру ({players.length}/{chat?.max_players})
+            </>
+          )}
+        </button>
+      </div>
+    )}
     </div>
   );
 };
