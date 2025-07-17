@@ -45,14 +45,16 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
-  const isCreatorRef = useRef(false);
-  const dataPollingRef = useRef<NodeJS.Timeout>();
+  const isMountedRef = useRef(true);
 
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    if (!isMountedRef.current) return;
     setNotificationMessage(message);
     setNotificationType(type);
     setShowNotification(true);
-    setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
+    setTimeout(() => {
+      if (isMountedRef.current) setShowNotification(false);
+    }, type === 'success' ? 3000 : 2000);
   }, []);
 
   const fetchChatData = useCallback(async (): Promise<Chat | null> => {
@@ -91,15 +93,12 @@ const WaitingRoom: React.FC = () => {
       const updatedPlayers = playersData || [];
       setPlayers(updatedPlayers);
       
-      const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
+      // Проверяем, является ли текущий пользователь создателем
+      const currentUserIsCreator = updatedPlayers.some(
+        p => p.user_id === user?.id && p.is_owner
+      );
+      
       setIsCreator(currentUserIsCreator);
-      isCreatorRef.current = currentUserIsCreator;
-
-      // Если текущий пользователь - создатель и его нет в списке игроков
-      if (isCreatorRef.current && !updatedPlayers.some(p => p.user_id === user?.id)) {
-        isCreatorRef.current = false;
-        setIsCreator(false);
-      }
 
       // Если нет создателя, но есть игроки - назначаем нового
       if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
@@ -112,14 +111,12 @@ const WaitingRoom: React.FC = () => {
 
         if (!error) {
           displayNotification('Новый создатель комнаты назначен', 'info');
-          await fetchPlayersData(); // Обновляем данные
         }
       }
     } catch (error) {
       console.error('Ошибка при загрузке игроков:', error);
     }
   }, [chatId, user?.id, displayNotification]);
-
 
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
@@ -139,7 +136,7 @@ const WaitingRoom: React.FC = () => {
     }
   }, [chatId]);
 
-  const setupSubscriptions = useCallback(async () => {
+  const setupSubscriptions = useCallback(() => {
     if (!chatId) return;
 
     // Отписываемся от всех предыдущих каналов
@@ -148,75 +145,67 @@ const WaitingRoom: React.FC = () => {
     });
     channelsRef.current = [];
 
-    try {
-      // Подписка на изменения игроков
-      const playersChannel = supabase
-        .channel('chat_players_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'chat_players',
-          filter: `chat_id=eq.${chatId}`
-        }, async (payload) => {
-          await fetchPlayersData();
-        });
+    // Подписка на изменения игроков
+    const playersChannel = supabase
+      .channel('chat_players_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chat_players',
+        filter: `chat_id=eq.${chatId}`
+      }, async () => {
+        await fetchPlayersData();
+      });
 
-      // Подписка на изменения чата
-      const chatChannel = supabase
-        .channel('chat_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'chats',
-          filter: `id=eq.${chatId}`
-        }, async (payload) => {
-          if (payload.eventType === 'DELETE') {
-            displayNotification('Комната закрыта', 'info');
-            setTimeout(() => navigate('/'), 3000);
-          } else if (payload.eventType === 'UPDATE') {
-            const updatedChat = payload.new as Chat;
-            setChat(updatedChat);
-            
-            // Добавляем проверку, что игра начата и текущий статус не in_progress
-            if (updatedChat.status === 'in_progress' && chat?.status !== 'in_progress') {
-              navigate(`/game/${chatId}`);
-            }
+    // Подписка на изменения чата
+    const chatChannel = supabase
+      .channel('chat_changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chats',
+        filter: `id=eq.${chatId}`
+      }, async (payload) => {
+        if (payload.eventType === 'DELETE') {
+          displayNotification('Комната закрыта', 'info');
+          setTimeout(() => navigate('/'), 3000);
+        } else if (payload.eventType === 'UPDATE') {
+          const updatedChat = payload.new as Chat;
+          setChat(updatedChat);
+          
+          if (updatedChat.status === 'in_progress') {
+            navigate(`/game/${chatId}`);
           }
-        });
+        }
+      });
 
-      // Подписываемся и сохраняем подписки
-      channelsRef.current = [
-        playersChannel.subscribe(
-          (status) => {
-            if (status === 'CHANNEL_ERROR') {
-              console.error('Ошибка подключения к каналу игроков');
-            }
-          }
-        ),
-        chatChannel.subscribe(
-          (status) => {
-            if (status === 'CHANNEL_ERROR') {
-              console.error('Ошибка подключения к каналу чата');
-            }
-          }
-        )
-      ];
-    } catch (error) {
-      console.error('Ошибка при создании подписок:', error);
-    }
+    // Подписываемся и сохраняем подписки
+    const playersSubscription = playersChannel.subscribe();
+    const chatSubscription = chatChannel.subscribe();
+    
+    channelsRef.current = [playersSubscription, chatSubscription];
+
+    return () => {
+      if (playersSubscription) supabase.removeChannel(playersSubscription);
+      if (chatSubscription) supabase.removeChannel(chatSubscription);
+    };
   }, [chatId, displayNotification, fetchPlayersData, navigate]);
 
   const startGame = async () => {
-    if (!chat || !isCreatorRef.current) return;
+    if (!chat || !isCreator) return;
     
     if (players.length < chat.min_players) {
       displayNotification(`Нужно минимум ${chat.min_players} игроков`, 'error');
       return;
     }
 
+    if (questions.length === 0) {
+      displayNotification('Добавьте вопросы перед началом игры', 'error');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Обновляем статус и started_at одним запросом
       const { error } = await supabase
         .from('chats')
         .update({ 
@@ -227,7 +216,7 @@ const WaitingRoom: React.FC = () => {
 
       if (error) throw error;
       
-      // Не ждем подписку, сразу переходим
+      // Немедленный переход без ожидания обновления через подписку
       navigate(`/game/${chat.id}`);
     } catch (error) {
       console.error('Ошибка при запуске игры:', error);
@@ -236,14 +225,15 @@ const WaitingRoom: React.FC = () => {
     }
   };
 
-
   const leaveRoom = async () => {
     if (!user || !chatId || isLeaving) return;
     setIsLeaving(true);
 
     try {
       // Проверяем, является ли пользователь создателем
-      const isCurrentUserCreator = players.some(p => p.user_id === user.id && p.is_owner);
+      const isCurrentUserCreator = players.some(
+        p => p.user_id === user.id && p.is_owner
+      );
       
       // Удаляем пользователя из комнаты
       const { error } = await supabase
@@ -265,8 +255,6 @@ const WaitingRoom: React.FC = () => {
         await supabase.from('questions').delete().eq('chat_id', chatId);
         await supabase.from('chats').delete().eq('id', chatId);
       } else if (isCurrentUserCreator) {
-        // Если пользователь был создателем, но остались другие игроки
-        // Новый создатель будет назначен автоматически через подписку
         displayNotification('Вы вышли из комнаты. Новый создатель будет назначен.', 'info');
       }
 
@@ -281,12 +269,14 @@ const WaitingRoom: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!chatId) {
-      navigate('/');
-      return;
-    }
+    isMountedRef.current = true;
 
     const initializeData = async () => {
+      if (!chatId) {
+        navigate('/');
+        return;
+      }
+
       try {
         setLoading(true);
         
@@ -305,14 +295,7 @@ const WaitingRoom: React.FC = () => {
           return;
         }
 
-        await setupSubscriptions();
-        
-        // Запускаем периодическую проверку данных
-        dataPollingRef.current = setInterval(async () => {
-          await fetchPlayersData();
-          await fetchQuestionsData();
-        }, 5000);
-
+        setupSubscriptions();
       } catch (error) {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
@@ -324,16 +307,12 @@ const WaitingRoom: React.FC = () => {
     initializeData();
 
     return () => {
+      isMountedRef.current = false;
       // Отписываемся от всех каналов при размонтировании
       channelsRef.current.forEach(channel => {
         supabase.removeChannel(channel);
       });
       channelsRef.current = [];
-      
-      // Очищаем интервал проверки данных
-      if (dataPollingRef.current) {
-        clearInterval(dataPollingRef.current);
-      }
     };
   }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
 
@@ -505,13 +484,13 @@ const WaitingRoom: React.FC = () => {
       </div>
 
       {/* Кнопка начала игры (только для создателя) */}
-      {isCreator && chat?.status !== 'in_progress' && (
+      {isCreator && chat?.status === 'waiting' && (
         <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
           <button
             onClick={startGame}
-            disabled={players.length < (chat?.min_players || 0) || loading}
+            disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
             className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
-              players.length >= (chat?.min_players || 0) 
+              (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0
                 ? 'hover:bg-[#007acc]' 
                 : 'opacity-50 cursor-not-allowed'
             }`}
