@@ -45,49 +45,50 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
-  const isMountedRef = useRef(true);
 
+  // Функция для показа уведомлений
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
     setNotificationType(type);
     setShowNotification(true);
-    setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
+    setTimeout(() => setShowNotification(false), 3000);
   }, []);
 
-  const fetchChatData = useCallback(async (): Promise<Chat | null> => {
+  // Загрузка данных комнаты
+  const fetchChatData = useCallback(async () => {
     if (!chatId) {
       navigate('/');
       return null;
     }
 
-    const { data: chatData, error: chatError } = await supabase
+    const { data, error } = await supabase
       .from('chats')
       .select('*')
       .eq('id', chatId)
       .single();
 
-    if (chatError || !chatData) {
-      console.error('Ошибка при получении комнаты:', chatError);
+    if (error || !data) {
       displayNotification('Комната не найдена', 'error');
       navigate('/');
       return null;
     }
 
-    return chatData;
+    return data;
   }, [chatId, navigate, displayNotification]);
 
+  // Загрузка списка игроков
   const fetchPlayersData = useCallback(async () => {
     if (!chatId) return;
 
     try {
-      const { data: playersData, error: playersError } = await supabase
+      const { data, error } = await supabase
         .from('chat_players')
         .select('*, profiles(username)')
         .eq('chat_id', chatId);
 
-      if (playersError) throw playersError;
+      if (error) throw error;
 
-      const updatedPlayers = playersData || [];
+      const updatedPlayers = data || [];
       setPlayers(updatedPlayers);
       
       // Проверяем является ли текущий пользователь создателем
@@ -99,46 +100,45 @@ const WaitingRoom: React.FC = () => {
       // Если нет создателя, но есть игроки - назначаем нового
       if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
         const newOwnerId = updatedPlayers[0].user_id;
-        const { error } = await supabase
+        const { error: updateError } = await supabase
           .from('chat_players')
           .update({ is_owner: true })
           .eq('user_id', newOwnerId)
           .eq('chat_id', chatId);
 
-        if (!error) {
+        if (!updateError) {
           displayNotification('Новый создатель комнаты назначен', 'info');
         }
       }
     } catch (error) {
-      console.error('Ошибка при загрузке игроков:', error);
+      console.error('Ошибка загрузки игроков:', error);
     }
   }, [chatId, user?.id, displayNotification]);
 
+  // Загрузка вопросов
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
 
     try {
-      const { data: questionsData, error: questionsError } = await supabase
+      const { data, error } = await supabase
         .from('questions')
         .select('*')
         .eq('chat_id', chatId)
         .order('order', { ascending: true });
 
-      if (questionsError) throw questionsError;
-
-      setQuestions(questionsData || []);
+      if (error) throw error;
+      setQuestions(data || []);
     } catch (error) {
-      console.error('Ошибка при загрузке вопросов:', error);
+      console.error('Ошибка загрузки вопросов:', error);
     }
   }, [chatId]);
 
+  // Настройка подписок на изменения
   const setupSubscriptions = useCallback(() => {
     if (!chatId) return;
 
-    // Отписываемся от предыдущих подписок
-    channelsRef.current.forEach(channel => {
-      supabase.removeChannel(channel);
-    });
+    // Отписываемся от старых подписок
+    channelsRef.current.forEach(channel => supabase.removeChannel(channel));
     channelsRef.current = [];
 
     // Подписка на изменения игроков
@@ -149,9 +149,7 @@ const WaitingRoom: React.FC = () => {
         schema: 'public',
         table: 'chat_players',
         filter: `chat_id=eq.${chatId}`
-      }, () => {
-        fetchPlayersData();
-      });
+      }, fetchPlayersData);
 
     // Подписка на изменения чата
     const chatChannel = supabase
@@ -172,17 +170,13 @@ const WaitingRoom: React.FC = () => {
         }
       });
 
-    const playersSubscription = playersChannel.subscribe();
-    const chatSubscription = chatChannel.subscribe();
-    
-    channelsRef.current = [playersSubscription, chatSubscription];
-
-    return () => {
-      if (playersSubscription) supabase.removeChannel(playersSubscription);
-      if (chatSubscription) supabase.removeChannel(chatSubscription);
-    };
+    channelsRef.current = [
+      playersChannel.subscribe(),
+      chatChannel.subscribe()
+    ];
   }, [chatId, fetchPlayersData, navigate]);
 
+  // Запуск игры
   const startGame = async () => {
     if (!chat || !isCreator) return;
     
@@ -210,18 +204,20 @@ const WaitingRoom: React.FC = () => {
       
       navigate(`/game/${chat.id}`);
     } catch (error) {
-      console.error('Ошибка при запуске игры:', error);
-      displayNotification('Ошибка при запуске игры', 'error');
+      console.error('Ошибка запуска игры:', error);
+      displayNotification('Ошибка запуска игры', 'error');
+    } finally {
       setLoading(false);
     }
   };
 
+  // Выход из комнаты
   const leaveRoom = async () => {
     if (!user || !chatId || isLeaving) return;
     setIsLeaving(true);
 
     try {
-      // Удаляем текущего пользователя из комнаты
+      // Удаляем пользователя из комнаты
       const { error } = await supabase
         .from('chat_players')
         .delete()
@@ -233,17 +229,18 @@ const WaitingRoom: React.FC = () => {
       displayNotification('Вы вышли из комнаты', 'success');
       setTimeout(() => navigate('/'), 2000);
     } catch (error) {
-      console.error('Ошибка при выходе из комнаты:', error);
-      displayNotification('Ошибка при выходе', 'error');
+      console.error('Ошибка выхода:', error);
+      displayNotification('Ошибка выхода', 'error');
     } finally {
       setIsLeaving(false);
     }
   };
 
+  // Инициализация данных
   useEffect(() => {
-    isMountedRef.current = true;
+    let mounted = true;
 
-    const initializeData = async () => {
+    const initialize = async () => {
       if (!chatId) {
         navigate('/');
         return;
@@ -253,7 +250,7 @@ const WaitingRoom: React.FC = () => {
         setLoading(true);
         
         const chatData = await fetchChatData();
-        if (!chatData) return;
+        if (!chatData || !mounted) return;
 
         setChat(chatData);
 
@@ -272,18 +269,15 @@ const WaitingRoom: React.FC = () => {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
-    initializeData();
+    initialize();
 
     return () => {
-      isMountedRef.current = false;
-      channelsRef.current.forEach(channel => {
-        supabase.removeChannel(channel);
-      });
-      channelsRef.current = [];
+      mounted = false;
+      channelsRef.current.forEach(channel => supabase.removeChannel(channel));
     };
   }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
 
@@ -297,7 +291,7 @@ const WaitingRoom: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-white overflow-hidden">
-      {/* Уведомление */}
+      {/* Уведомления */}
       {showNotification && (
         <div className={`fixed inset-0 flex items-center justify-center z-50 ${
           notificationType === 'success' ? 'bg-[#0092FF]' : 
@@ -309,166 +303,149 @@ const WaitingRoom: React.FC = () => {
             ) : notificationType === 'error' ? (
               <XCircle className="w-16 h-16 mx-auto mb-4" />
             ) : null}
-            <h2 className="text-3xl md:text-4xl font-bold mb-2">
-              {notificationMessage}
-            </h2>
+            <h2 className="text-3xl font-bold mb-2">{notificationMessage}</h2>
           </div>
         </div>
       )}
 
-      {/* Основной контент */}
-      <div className="flex-1 overflow-hidden">
-        <div className="h-full overflow-y-auto">
-          <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10 px-4">
-            <button
-              onClick={leaveRoom}
-              disabled={isLeaving}
-              className="p-2 text-[#0092FF]/80 hover:text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg transition-all group disabled:opacity-50"
-            >
-              {isLeaving ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <LogOut className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-              )}
-            </button>
-            
-            <h1 className="text-xl md:text-2xl font-bold text-[#0092FF]">{chat?.name}</h1>
-            
-            <div className="w-10"></div>
-          </header>
+      {/* Основной интерфейс */}
+      <div className="flex-1 overflow-y-auto">
+        <header className="sticky top-0 bg-white py-4 px-4 flex justify-between items-center border-b z-10">
+          <button
+            onClick={leaveRoom}
+            disabled={isLeaving}
+            className="p-2 text-[#0092FF] hover:bg-[#0092FF]/10 rounded-lg"
+          >
+            {isLeaving ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <LogOut className="w-5 h-5" />
+            )}
+          </button>
+          <h1 className="text-xl font-bold text-[#0092FF]">{chat?.name}</h1>
+          <div className="w-5"></div>
+        </header>
 
-          <div className="max-w-md mx-auto mt-4 pb-24 px-4">
-            {/* Информация о комнате */}
-            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-              <div className="flex justify-between items-center mb-4">
-                <div className="text-center">
-                  <div className="text-2xl md:text-3xl font-bold text-[#0092FF]">
-                    {players.length}/{chat?.max_players || 0}
-                  </div>
-                  <div className="text-sm text-gray-500">Игроков</div>
+        <div className="max-w-md mx-auto p-4">
+          {/* Статистика комнаты */}
+          <div className="bg-white rounded-lg shadow-sm border border-[#0092FF]/20 p-4 mb-4">
+            <div className="flex justify-between mb-3">
+              <div>
+                <div className="text-2xl font-bold text-[#0092FF]">
+                  {players.length}/{chat?.max_players}
                 </div>
-                
-                {chat?.password && (
-                  <div className="text-center">
-                    <div className="text-sm text-gray-500 mb-1">Пароль</div>
-                    <div className="text-lg md:text-xl font-bold text-[#0092FF]">
-                      {chat.password}
-                    </div>
+                <div className="text-sm text-gray-500">Игроков</div>
+              </div>
+              {chat?.password && (
+                <div>
+                  <div className="text-sm text-gray-500">Пароль</div>
+                  <div className="text-lg font-bold text-[#0092FF]">
+                    {chat.password}
                   </div>
-                )}
-              </div>
-              
-              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
-                <div 
-                  className="bg-[#0092FF] h-2.5 rounded-full transition-all duration-500" 
-                  style={{ 
-                    width: `${Math.min(100, (players.length / (chat?.max_players || 1)) * 100)}%` 
-                  }}
-                ></div>
-              </div>
+                </div>
+              )}
             </div>
-
-            {/* Список игроков */}
-            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <Users className="w-5 h-5 text-[#0092FF]" />
-                Участники комнаты ({players.length})
-              </h2>
-              
-              <div className="space-y-3">
-                {players.length === 0 ? (
-                  <div className="text-center text-gray-500 py-4">
-                    Ожидаем игроков...
-                  </div>
-                ) : (
-                  players.map((player) => (
-                    <div 
-                      key={player.user_id}
-                      className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
-                        player.is_owner 
-                          ? 'bg-[#0092FF]/10 border border-[#0092FF]/20' 
-                          : 'bg-gray-50'
-                      }`}
-                    >
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF]">
-                        <User className="w-4 h-4 md:w-5 md:h-5" />
-                      </div>
-                      <div className="font-medium text-gray-900">
-                        {player.profiles?.username || 'Аноним'}
-                      </div>
-                      {player.is_owner && (
-                        <div className="ml-auto flex items-center gap-1 text-yellow-500">
-                          <Crown className="w-4 h-4" />
-                          <span className="text-xs">Создатель</span>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-[#0092FF] h-2 rounded-full" 
+                style={{ 
+                  width: `${Math.min(100, (players.length / (chat?.max_players || 1)) * 100)}%` 
+                }}
+              />
             </div>
+          </div>
 
-            {/* Список вопросов */}
-            <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
-              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-[#0092FF]" />
-                Вопросы ({questions.length})
-              </h2>
-              
-              <div className="space-y-3">
-                {questions.length === 0 ? (
-                  <div className="text-center text-gray-500 py-4">
-                    Вопросы не добавлены
-                  </div>
-                ) : (
-                  questions.map((question, index) => (
-                    <div 
-                      key={question.id}
-                      className="flex items-start gap-3 p-3 rounded-lg bg-gray-50"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center text-[#0092FF] mt-1">
-                        <span className="text-sm font-bold">{index + 1}</span>
+          {/* Список игроков */}
+          <div className="bg-white rounded-lg shadow-sm border border-[#0092FF]/20 p-4 mb-4">
+            <h2 className="font-semibold mb-3 flex items-center gap-2">
+              <Users className="w-5 h-5 text-[#0092FF]" />
+              Участники ({players.length})
+            </h2>
+            <div className="space-y-2">
+              {players.length === 0 ? (
+                <div className="text-center text-gray-500 py-4">
+                  Ожидаем игроков...
+                </div>
+              ) : (
+                players.map(player => (
+                  <div 
+                    key={player.user_id} 
+                    className={`p-3 rounded-lg flex items-center gap-3 ${
+                      player.is_owner ? 'bg-[#0092FF]/10' : 'bg-gray-50'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center">
+                      <User className="w-4 h-4 text-[#0092FF]" />
+                    </div>
+                    <div className="font-medium">
+                      {player.profiles?.username || 'Аноним'}
+                    </div>
+                    {player.is_owner && (
+                      <div className="ml-auto flex items-center gap-1 text-yellow-500">
+                        <Crown className="w-4 h-4" />
+                        <span className="text-xs">Создатель</span>
                       </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-gray-900">
-                          {question.question_text}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {question.is_ano ? 'Из базы вопросов' : 'Пользовательский'}
-                        </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Список вопросов */}
+          <div className="bg-white rounded-lg shadow-sm border border-[#0092FF]/20 p-4 mb-4">
+            <h2 className="font-semibold mb-3 flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-[#0092FF]" />
+              Вопросы ({questions.length})
+            </h2>
+            <div className="space-y-2">
+              {questions.length === 0 ? (
+                <div className="text-center text-gray-500 py-4">
+                  Вопросы не добавлены
+                </div>
+              ) : (
+                questions.map((question, i) => (
+                  <div key={question.id} className="p-3 rounded-lg bg-gray-50 flex gap-3">
+                    <div className="w-8 h-8 rounded-full bg-[#0092FF]/10 flex items-center justify-center mt-1">
+                      <span className="text-sm font-bold">{i + 1}</span>
+                    </div>
+                    <div>
+                      <div className="font-medium">{question.question_text}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {question.is_ano ? 'Из базы' : 'Пользовательский'}
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Кнопка начала игры (только для создателя) */}
-    {isCreator && chat?.status === 'waiting' && (
-      <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
-        <button
-          onClick={startGame}
-          disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
-          className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
-            (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0)
-              ? 'hover:bg-[#007acc]' 
-              : 'opacity-50 cursor-not-allowed'
-          }`}
-        >
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <>
-              <Play className="w-5 h-5" />
-              Начать игру ({players.length}/{chat?.max_players})
-            </>
-          )}
-        </button>
-      </div>
-    )}
+      {/* Кнопка начала игры */}
+      {isCreator && chat?.status === 'waiting' && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t">
+          <button
+            onClick={startGame}
+            disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
+            className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
+              (!loading && players.length >= chat.min_players && questions.length > 0)
+                ? 'hover:bg-[#007acc]' 
+                : 'opacity-50 cursor-not-allowed'
+            }`}
+          >
+            {loading ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <>
+                <Play className="w-5 h-5" />
+                Начать игру ({players.length}/{chat.max_players})
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
