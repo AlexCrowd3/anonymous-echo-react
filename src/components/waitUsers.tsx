@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/hooks/use-auth';
 import { Users, Play, LogOut, User, Crown, Loader2, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
 
 interface Chat {
@@ -32,7 +32,7 @@ const WaitingRoom: React.FC = () => {
   const channelsRef = useRef<any[]>([]);
   const isMounted = useRef(true);
 
-  // Функция для отображения уведомлений
+  // Отображение уведомлений
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
     setNotificationType(type);
@@ -42,8 +42,6 @@ const WaitingRoom: React.FC = () => {
 
   // Загрузка данных чата
   const fetchChatData = useCallback(async () => {
-    if (!chatId) return null;
-    
     try {
       const { data, error } = await supabase
         .from('chats')
@@ -51,21 +49,21 @@ const WaitingRoom: React.FC = () => {
         .eq('id', chatId)
         .single();
 
-      if (error || !data) throw error || new Error('Chat not found');
-      
+      if (error || !data) {
+        throw error || new Error('Комната не найдена');
+      }
+
       return data;
     } catch (error) {
-      console.error('Ошибка загрузки чата:', error);
-      displayNotification('Ошибка загрузки комнаты', 'error');
+      console.error('Ошибка загрузки комнаты:', error);
+      displayNotification('Комната не найдена', 'error');
       navigate('/');
       return null;
     }
   }, [chatId, navigate, displayNotification]);
 
-  // Загрузка списка игроков
+  // Загрузка игроков
   const fetchPlayersData = useCallback(async () => {
-    if (!chatId) return;
-    
     try {
       const { data, error } = await supabase
         .from('chat_players')
@@ -76,21 +74,21 @@ const WaitingRoom: React.FC = () => {
 
       if (data) {
         setPlayers(data);
-        // Проверяем, является ли текущий пользователь создателем
-        const creator = data.find(p => p.user_id === user?.id && p.is_owner);
-        setIsCreator(!!creator);
+        // Определяем является ли текущий пользователь создателем
+        const creatorStatus = data.some(p => p.user_id === user?.id && p.is_owner);
+        setIsCreator(creatorStatus);
         
-        // Если нет создателя, назначаем первого игрока создателем
+        // Если нет создателя, назначаем первого игрока
         if (data.length > 0 && !data.some(p => p.is_owner)) {
-          const newOwnerId = data[0].user_id;
           const { error: updateError } = await supabase
             .from('chat_players')
             .update({ is_owner: true })
-            .eq('user_id', newOwnerId)
+            .eq('user_id', data[0].user_id)
             .eq('chat_id', chatId);
 
           if (!updateError) {
-            displayNotification('Новый создатель комнаты назначен', 'info');
+            displayNotification('Назначен новый создатель комнаты', 'info');
+            await fetchPlayersData(); // Обновляем данные после изменения
           }
         }
       }
@@ -101,8 +99,6 @@ const WaitingRoom: React.FC = () => {
 
   // Загрузка вопросов
   const fetchQuestionsData = useCallback(async () => {
-    if (!chatId) return;
-    
     try {
       const { data, error } = await supabase
         .from('questions')
@@ -111,7 +107,6 @@ const WaitingRoom: React.FC = () => {
         .order('order', { ascending: true });
 
       if (error) throw error;
-      
       if (data) setQuestions(data);
     } catch (error) {
       console.error('Ошибка загрузки вопросов:', error);
@@ -120,8 +115,6 @@ const WaitingRoom: React.FC = () => {
 
   // Настройка подписок на изменения
   const setupSubscriptions = useCallback(async () => {
-    if (!chatId) return;
-
     // Отписываемся от старых подписок
     channelsRef.current.forEach(channel => supabase.removeChannel(channel));
     channelsRef.current = [];
@@ -147,7 +140,7 @@ const WaitingRoom: React.FC = () => {
           filter: `id=eq.${chatId}`
         }, (payload) => {
           if (payload.eventType === 'DELETE') {
-            displayNotification('Комната была закрыта', 'info');
+            displayNotification('Комната была удалена', 'info');
             setTimeout(() => navigate('/'), 2000);
           } else if (payload.eventType === 'UPDATE') {
             setChat(payload.new);
@@ -157,7 +150,6 @@ const WaitingRoom: React.FC = () => {
           }
         });
 
-      // Сохраняем подписки
       channelsRef.current = [
         playersChannel.subscribe(),
         chatChannel.subscribe()
@@ -178,12 +170,11 @@ const WaitingRoom: React.FC = () => {
 
     setLoading(true);
     try {
-      // Обновляем статус игры
       const { error } = await supabase
         .from('chats')
         .update({ 
           status: 'in_progress',
-          started_at: new Date().toISOString() 
+          started_at: new Date().toISOString()
         })
         .eq('id', chat.id);
 
@@ -205,7 +196,6 @@ const WaitingRoom: React.FC = () => {
     
     setIsLeaving(true);
     try {
-      // Удаляем игрока
       const { error } = await supabase
         .from('chat_players')
         .delete()
@@ -241,11 +231,6 @@ const WaitingRoom: React.FC = () => {
     isMounted.current = true;
 
     const initialize = async () => {
-      if (!chatId) {
-        navigate('/');
-        return;
-      }
-
       setLoading(true);
       try {
         const chatData = await fetchChatData();
@@ -272,7 +257,11 @@ const WaitingRoom: React.FC = () => {
       }
     };
 
-    initialize();
+    if (chatId) {
+      initialize();
+    } else {
+      navigate('/');
+    }
 
     return () => {
       isMounted.current = false;
@@ -447,7 +436,7 @@ const WaitingRoom: React.FC = () => {
         </div>
       </div>
 
-      {/* Кнопка начала игры */}
+      {/* Кнопка начала игры - теперь стабильная! */}
       {isCreator && chat?.status !== 'in_progress' && (
         <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
           <button
