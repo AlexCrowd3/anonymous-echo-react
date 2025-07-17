@@ -95,7 +95,13 @@ const WaitingRoom: React.FC = () => {
       setIsCreator(currentUserIsCreator);
       isCreatorRef.current = currentUserIsCreator;
 
-      // Если нет создателя и есть игроки - назначаем нового
+      // Если текущий пользователь - создатель и его нет в списке игроков
+      if (isCreatorRef.current && !updatedPlayers.some(p => p.user_id === user?.id)) {
+        isCreatorRef.current = false;
+        setIsCreator(false);
+      }
+
+      // Если нет создателя, но есть игроки - назначаем нового
       if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
         const newOwnerId = updatedPlayers[0].user_id;
         const { error } = await supabase
@@ -106,14 +112,14 @@ const WaitingRoom: React.FC = () => {
 
         if (!error) {
           displayNotification('Новый создатель комнаты назначен', 'info');
-          // Обновляем данные после назначения нового создателя
-          await fetchPlayersData();
+          await fetchPlayersData(); // Обновляем данные
         }
       }
     } catch (error) {
       console.error('Ошибка при загрузке игроков:', error);
     }
   }, [chatId, user?.id, displayNotification]);
+
 
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
@@ -171,7 +177,8 @@ const WaitingRoom: React.FC = () => {
             const updatedChat = payload.new as Chat;
             setChat(updatedChat);
             
-            if (updatedChat.status === 'in_progress') {
+            // Добавляем проверку, что игра начата и текущий статус не in_progress
+            if (updatedChat.status === 'in_progress' && chat?.status !== 'in_progress') {
               navigate(`/game/${chatId}`);
             }
           }
@@ -209,37 +216,35 @@ const WaitingRoom: React.FC = () => {
 
     setLoading(true);
     try {
-      // Сначала обновляем статус без started_at
-      const { error: statusError } = await supabase
+      // Обновляем статус и started_at одним запросом
+      const { error } = await supabase
         .from('chats')
-        .update({ status: 'in_progress' })
+        .update({ 
+          status: 'in_progress',
+          started_at: new Date().toISOString() 
+        })
         .eq('id', chat.id);
 
-      if (statusError) throw statusError;
-
-      // Затем обновляем started_at отдельным запросом
-      const { error: dateError } = await supabase
-        .from('chats')
-        .update({ started_at: new Date().toISOString() })
-        .eq('id', chat.id);
-
-      if (dateError) throw dateError;
+      if (error) throw error;
       
-      displayNotification('Игра начинается!', 'success');
+      // Не ждем подписку, сразу переходим
       navigate(`/game/${chat.id}`);
     } catch (error) {
       console.error('Ошибка при запуске игры:', error);
       displayNotification('Ошибка при запуске игры', 'error');
-    } finally {
       setLoading(false);
     }
   };
+
 
   const leaveRoom = async () => {
     if (!user || !chatId || isLeaving) return;
     setIsLeaving(true);
 
     try {
+      // Проверяем, является ли пользователь создателем
+      const isCurrentUserCreator = players.some(p => p.user_id === user.id && p.is_owner);
+      
       // Удаляем пользователя из комнаты
       const { error } = await supabase
         .from('chat_players')
@@ -259,9 +264,10 @@ const WaitingRoom: React.FC = () => {
       if (count === 0) {
         await supabase.from('questions').delete().eq('chat_id', chatId);
         await supabase.from('chats').delete().eq('id', chatId);
-      } else {
-        // Если остались игроки - обновляем данные
-        await fetchPlayersData();
+      } else if (isCurrentUserCreator) {
+        // Если пользователь был создателем, но остались другие игроки
+        // Новый создатель будет назначен автоматически через подписку
+        displayNotification('Вы вышли из комнаты. Новый создатель будет назначен.', 'info');
       }
 
       displayNotification('Вы вышли из комнаты', 'success');
