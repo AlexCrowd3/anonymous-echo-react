@@ -14,29 +14,14 @@ interface Chat {
   started_at?: string;
 }
 
-interface Player {
-  user_id: string;
-  is_owner: boolean;
-  profiles?: {
-    username: string;
-  };
-}
-
-interface Question {
-  id: string;
-  question_text: string;
-  is_ano: boolean;
-  order: number;
-}
-
 const WaitingRoom: React.FC = () => {
   const { id: chatId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   
   const [chat, setChat] = useState<Chat | null>(null);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [questions, setQuestions] = useState<Question[]>([]);
+  const [players, setPlayers] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreator, setIsCreator] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
@@ -45,9 +30,9 @@ const WaitingRoom: React.FC = () => {
   const [isLeaving, setIsLeaving] = useState(false);
   
   const channelsRef = useRef<any[]>([]);
-  const isCreatorRef = useRef(false);
-  const dataPollingRef = useRef<NodeJS.Timeout>();
+  const isMounted = useRef(true);
 
+  // Функция для отображения уведомлений
   const displayNotification = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotificationMessage(message);
     setNotificationType(type);
@@ -55,105 +40,102 @@ const WaitingRoom: React.FC = () => {
     setTimeout(() => setShowNotification(false), type === 'success' ? 3000 : 2000);
   }, []);
 
-  const fetchChatData = useCallback(async (): Promise<Chat | null> => {
-    if (!chatId) {
+  // Загрузка данных чата
+  const fetchChatData = useCallback(async () => {
+    if (!chatId) return null;
+    
+    try {
+      const { data, error } = await supabase
+        .from('chats')
+        .select('*')
+        .eq('id', chatId)
+        .single();
+
+      if (error || !data) throw error || new Error('Chat not found');
+      
+      return data;
+    } catch (error) {
+      console.error('Ошибка загрузки чата:', error);
+      displayNotification('Ошибка загрузки комнаты', 'error');
       navigate('/');
       return null;
     }
-
-    const { data: chatData, error: chatError } = await supabase
-      .from('chats')
-      .select('*')
-      .eq('id', chatId)
-      .single();
-
-    if (chatError || !chatData) {
-      console.error('Ошибка при получении комнаты:', chatError);
-      displayNotification('Комната не найдена', 'error');
-      navigate('/');
-      return null;
-    }
-
-    return chatData;
   }, [chatId, navigate, displayNotification]);
 
+  // Загрузка списка игроков
   const fetchPlayersData = useCallback(async () => {
     if (!chatId) return;
-
+    
     try {
-      const { data: playersData, error: playersError } = await supabase
+      const { data, error } = await supabase
         .from('chat_players')
         .select('*, profiles(username)')
         .eq('chat_id', chatId);
 
-      if (playersError) throw playersError;
+      if (error) throw error;
 
-      const updatedPlayers = playersData || [];
-      setPlayers(updatedPlayers);
-      
-      const currentUserIsCreator = updatedPlayers.some(p => p.user_id === user?.id && p.is_owner);
-      setIsCreator(currentUserIsCreator);
-      isCreatorRef.current = currentUserIsCreator;
+      if (data) {
+        setPlayers(data);
+        // Проверяем, является ли текущий пользователь создателем
+        const creator = data.find(p => p.user_id === user?.id && p.is_owner);
+        setIsCreator(!!creator);
+        
+        // Если нет создателя, назначаем первого игрока создателем
+        if (data.length > 0 && !data.some(p => p.is_owner)) {
+          const newOwnerId = data[0].user_id;
+          const { error: updateError } = await supabase
+            .from('chat_players')
+            .update({ is_owner: true })
+            .eq('user_id', newOwnerId)
+            .eq('chat_id', chatId);
 
-      // Если нет создателя и есть игроки - назначаем нового
-      if (updatedPlayers.length > 0 && !updatedPlayers.some(p => p.is_owner)) {
-        const newOwnerId = updatedPlayers[0].user_id;
-        const { error } = await supabase
-          .from('chat_players')
-          .update({ is_owner: true })
-          .eq('user_id', newOwnerId)
-          .eq('chat_id', chatId);
-
-        if (!error) {
-          displayNotification('Новый создатель комнаты назначен', 'info');
-          // Обновляем данные после назначения нового создателя
-          await fetchPlayersData();
+          if (!updateError) {
+            displayNotification('Новый создатель комнаты назначен', 'info');
+          }
         }
       }
     } catch (error) {
-      console.error('Ошибка при загрузке игроков:', error);
+      console.error('Ошибка загрузки игроков:', error);
     }
   }, [chatId, user?.id, displayNotification]);
 
+  // Загрузка вопросов
   const fetchQuestionsData = useCallback(async () => {
     if (!chatId) return;
-
+    
     try {
-      const { data: questionsData, error: questionsError } = await supabase
+      const { data, error } = await supabase
         .from('questions')
         .select('*')
         .eq('chat_id', chatId)
         .order('order', { ascending: true });
 
-      if (questionsError) throw questionsError;
-
-      setQuestions(questionsData || []);
+      if (error) throw error;
+      
+      if (data) setQuestions(data);
     } catch (error) {
-      console.error('Ошибка при загрузке вопросов:', error);
+      console.error('Ошибка загрузки вопросов:', error);
     }
   }, [chatId]);
 
+  // Настройка подписок на изменения
   const setupSubscriptions = useCallback(async () => {
     if (!chatId) return;
 
-    // Отписываемся от всех предыдущих каналов
-    channelsRef.current.forEach(channel => {
-      supabase.removeChannel(channel);
-    });
+    // Отписываемся от старых подписок
+    channelsRef.current.forEach(channel => supabase.removeChannel(channel));
     channelsRef.current = [];
 
     try {
       // Подписка на изменения игроков
       const playersChannel = supabase
-        .channel('chat_players_changes')
+        .channel('players_changes')
         .on('postgres_changes', {
           event: '*',
           schema: 'public',
           table: 'chat_players',
           filter: `chat_id=eq.${chatId}`
-        }, async (payload) => {
-          await fetchPlayersData();
-        });
+        }, () => fetchPlayersData());
 
       // Подписка на изменения чата
       const chatChannel = supabase
@@ -163,84 +145,67 @@ const WaitingRoom: React.FC = () => {
           schema: 'public',
           table: 'chats',
           filter: `id=eq.${chatId}`
-        }, async (payload) => {
+        }, (payload) => {
           if (payload.eventType === 'DELETE') {
-            displayNotification('Комната закрыта', 'info');
-            setTimeout(() => navigate('/'), 3000);
+            displayNotification('Комната была закрыта', 'info');
+            setTimeout(() => navigate('/'), 2000);
           } else if (payload.eventType === 'UPDATE') {
-            const updatedChat = payload.new as Chat;
-            setChat(updatedChat);
-            
-            if (updatedChat.status === 'in_progress') {
+            setChat(payload.new);
+            if (payload.new.status === 'in_progress') {
               navigate(`/game/${chatId}`);
             }
           }
         });
 
-      // Подписываемся и сохраняем подписки
+      // Сохраняем подписки
       channelsRef.current = [
-        playersChannel.subscribe(
-          (status) => {
-            if (status === 'CHANNEL_ERROR') {
-              console.error('Ошибка подключения к каналу игроков');
-            }
-          }
-        ),
-        chatChannel.subscribe(
-          (status) => {
-            if (status === 'CHANNEL_ERROR') {
-              console.error('Ошибка подключения к каналу чата');
-            }
-          }
-        )
+        playersChannel.subscribe(),
+        chatChannel.subscribe()
       ];
     } catch (error) {
-      console.error('Ошибка при создании подписок:', error);
+      console.error('Ошибка подписки:', error);
     }
-  }, [chatId, displayNotification, fetchPlayersData, navigate]);
+  }, [chatId, fetchPlayersData, navigate, displayNotification]);
 
-  const startGame = async () => {
-    if (!chat || !isCreatorRef.current) return;
+  // Запуск игры
+  const startGame = useCallback(async () => {
+    if (!chat || !isCreator || loading) return;
     
     if (players.length < chat.min_players) {
-      displayNotification(`Нужно минимум ${chat.min_players} игроков`, 'error');
+      displayNotification(`Необходимо минимум ${chat.min_players} игроков`, 'error');
       return;
     }
 
     setLoading(true);
     try {
-      // Сначала обновляем статус без started_at
-      const { error: statusError } = await supabase
+      // Обновляем статус игры
+      const { error } = await supabase
         .from('chats')
-        .update({ status: 'in_progress' })
+        .update({ 
+          status: 'in_progress',
+          started_at: new Date().toISOString() 
+        })
         .eq('id', chat.id);
 
-      if (statusError) throw statusError;
-
-      // Затем обновляем started_at отдельным запросом
-      const { error: dateError } = await supabase
-        .from('chats')
-        .update({ started_at: new Date().toISOString() })
-        .eq('id', chat.id);
-
-      if (dateError) throw dateError;
+      if (error) throw error;
       
       displayNotification('Игра начинается!', 'success');
       navigate(`/game/${chat.id}`);
     } catch (error) {
-      console.error('Ошибка при запуске игры:', error);
-      displayNotification('Ошибка при запуске игры', 'error');
+      console.error('Ошибка запуска игры:', error);
+      displayNotification('Не удалось начать игру', 'error');
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
-  };
+  }, [chat, isCreator, players, loading, navigate, displayNotification]);
 
-  const leaveRoom = async () => {
+  // Выход из комнаты
+  const leaveRoom = useCallback(async () => {
     if (!user || !chatId || isLeaving) return;
+    
     setIsLeaving(true);
-
     try {
-      // Удаляем пользователя из комнаты
+      // Удаляем игрока
       const { error } = await supabase
         .from('chat_players')
         .delete()
@@ -255,35 +220,34 @@ const WaitingRoom: React.FC = () => {
         .select('*', { count: 'exact', head: true })
         .eq('chat_id', chatId);
 
-      // Если игроков не осталось - удаляем комнату и вопросы
+      // Если игроков не осталось - удаляем комнату
       if (count === 0) {
         await supabase.from('questions').delete().eq('chat_id', chatId);
         await supabase.from('chats').delete().eq('id', chatId);
-      } else {
-        // Если остались игроки - обновляем данные
-        await fetchPlayersData();
       }
 
       displayNotification('Вы вышли из комнаты', 'success');
       setTimeout(() => navigate('/'), 2000);
     } catch (error) {
-      console.error('Ошибка при выходе из комнаты:', error);
+      console.error('Ошибка выхода:', error);
       displayNotification('Ошибка при выходе', 'error');
     } finally {
-      setIsLeaving(false);
+      if (isMounted.current) setIsLeaving(false);
     }
-  };
+  }, [user, chatId, isLeaving, navigate, displayNotification]);
 
+  // Инициализация данных
   useEffect(() => {
-    if (!chatId) {
-      navigate('/');
-      return;
-    }
+    isMounted.current = true;
 
-    const initializeData = async () => {
+    const initialize = async () => {
+      if (!chatId) {
+        navigate('/');
+        return;
+      }
+
+      setLoading(true);
       try {
-        setLoading(true);
-        
         const chatData = await fetchChatData();
         if (!chatData) return;
 
@@ -300,36 +264,21 @@ const WaitingRoom: React.FC = () => {
         }
 
         await setupSubscriptions();
-        
-        // Запускаем периодическую проверку данных
-        dataPollingRef.current = setInterval(async () => {
-          await fetchPlayersData();
-          await fetchQuestionsData();
-        }, 5000);
-
       } catch (error) {
         console.error('Ошибка инициализации:', error);
         displayNotification('Ошибка загрузки данных', 'error');
       } finally {
-        setLoading(false);
+        if (isMounted.current) setLoading(false);
       }
     };
 
-    initializeData();
+    initialize();
 
     return () => {
-      // Отписываемся от всех каналов при размонтировании
-      channelsRef.current.forEach(channel => {
-        supabase.removeChannel(channel);
-      });
-      channelsRef.current = [];
-      
-      // Очищаем интервал проверки данных
-      if (dataPollingRef.current) {
-        clearInterval(dataPollingRef.current);
-      }
+      isMounted.current = false;
+      channelsRef.current.forEach(channel => supabase.removeChannel(channel));
     };
-  }, [chatId, displayNotification, fetchChatData, fetchPlayersData, fetchQuestionsData, navigate, setupSubscriptions]);
+  }, [chatId, navigate, fetchChatData, fetchPlayersData, fetchQuestionsData, setupSubscriptions, displayNotification]);
 
   if (loading && !chat) {
     return (
@@ -368,7 +317,7 @@ const WaitingRoom: React.FC = () => {
         </div>
       )}
 
-      {/* Основной контент с прокруткой */}
+      {/* Основной контент */}
       <div className="flex-1 overflow-hidden">
         <div className="h-full overflow-y-auto">
           <header className="w-full py-4 flex justify-between items-center bg-white sticky top-0 z-10 px-4">
@@ -390,7 +339,7 @@ const WaitingRoom: React.FC = () => {
           </header>
 
           <div className="max-w-md mx-auto mt-4 pb-24 px-4">
-            {/* Блок с информацией о комнате */}
+            {/* Информация о комнате */}
             <div className="bg-white rounded-xl shadow-sm border border-[#0092FF]/20 p-5 mb-5">
               <div className="flex justify-between items-center mb-4">
                 <div className="text-center">
@@ -498,7 +447,7 @@ const WaitingRoom: React.FC = () => {
         </div>
       </div>
 
-      {/* Кнопка начала игры (только для создателя) */}
+      {/* Кнопка начала игры */}
       {isCreator && chat?.status !== 'in_progress' && (
         <div className="fixed bottom-0 left-0 right-0 bg-white py-3 px-4 border-t border-gray-200 z-30">
           <button
