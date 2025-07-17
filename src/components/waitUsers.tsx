@@ -490,7 +490,7 @@ const WaitingRoom: React.FC = () => {
             onClick={startGame}
             disabled={loading || players.length < (chat?.min_players || 0) || questions.length === 0}
             className={`w-full bg-[#0092FF] text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 ${
-              (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0
+              (!loading && players.length >= (chat?.min_players || 0) && questions.length > 0)
                 ? 'hover:bg-[#007acc]' 
                 : 'opacity-50 cursor-not-allowed'
             }`}
